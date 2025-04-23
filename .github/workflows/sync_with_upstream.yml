@@ -1,0 +1,47 @@
+name: Sync with Upstream
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs daily at midnight
+  push:
+    branches:
+      - main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/vllm-project/vllm.git
+
+      - name: Fetch upstream changes
+        run: git fetch upstream
+
+      - name: Merge upstream changes
+        run: |
+          git checkout main
+          git merge upstream/main || {
+            git checkout -b merge-conflict-$(date +%Y%m%d%H%M%S)
+            git push origin merge-conflict-$(date +%Y%m%d%H%M%S)
+            exit 1
+          }
+
+      - name: Push changes
+        run: git push origin main
+
+      - name: Send notification if merge conflict
+        if: failure()
+        run: |
+          echo "Merge conflict detected. Manual intervention required."
+          # Add your notification logic here (e.g., send an email, create an issue, etc.)
