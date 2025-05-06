@@ -32,6 +32,7 @@ jobs:
         run: |
           git checkout main
           git merge upstream/main || {
+            echo "Merge conflict detected. Creating a new branch for manual resolution."
             git checkout -b merge-conflict-$(date +%Y%m%d%H%M%S)
             git push origin merge-conflict-$(date +%Y%m%d%H%M%S)
             exit 1
