@@ -38,6 +38,12 @@ jobs:
             exit 1
           }
 
+      - name: Set up PAT for push
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          git remote set-url origin https://github-actions[bot]:${GH_PAT}@github.com/${{ github.repository }}.git
+
       - name: Push changes
         run: git push origin main
 
