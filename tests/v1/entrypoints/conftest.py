@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import pytest
 
@@ -74,7 +75,9 @@ def sample_json_schema():
                     },
                     "required": ["company", "duration", "position"],
                     "additionalProperties": False
-                }
+                },
+                "minItems": 0,
+                "maxItems": 3
             }
         },
         "required":
