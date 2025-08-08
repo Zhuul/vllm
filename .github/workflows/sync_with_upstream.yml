@@ -47,7 +47,7 @@ jobs:
           if git diff --name-only upstream/main | grep '^.github/workflows/'; then
             echo "workflow_changed=true" >> $GITHUB_OUTPUT
           else
-            echo "workflow_changed=false" >> $GITHUB_OUTPUT
+            echo "workflow_changed=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up PAT authentication
@@ -62,7 +62,7 @@ jobs:
 
       - name: Create Pull Request for workflow file changes
         if: steps.workflow_change.outputs.workflow_changed == 'true' && steps.merge.outputs.conflict == 'false'
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GH_PAT }}
           commit-message: "Sync with upstream: update workflow files"
