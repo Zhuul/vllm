@@ -1,114 +1,198 @@
 #!/bin/bash
-# check-wsl-gpu.sh
-# Diagnostic script to check WSL2 + GPU setup
+# Check WSL2 GPU Setup for vLLM Development
+# This script verifies NVIDIA GPU accessibility in WSL2 environment
 
-echo "=== WSL2 + GPU Diagnostic Tool ==="
-echo
+set -e
 
-# Check if we're in WSL2
-echo "WSL Version Check:"
-if grep -q Microsoft /proc/version; then
+echo "=== WSL2 GPU Check for vLLM Development ==="
+echo "Verifying NVIDIA GPU accessibility and configuration"
+echo ""
+
+# Basic system info
+echo "🖥️  System Information:"
+echo "Kernel: $(uname -r)"
+echo "Distribution: $(cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)"
+echo ""
+
+# Check if running in WSL2
+if [[ -f /proc/version ]] && grep -q "microsoft" /proc/version; then
     echo "✅ Running in WSL2"
-    cat /proc/version
 else
-    echo "❌ Not running in WSL2 - this script is for WSL2 environments"
+    echo "❌ Not running in WSL2"
     exit 1
 fi
-echo
 
-# Check WSL kernel version
-echo "WSL Kernel Version:"
-uname -r
-KERNEL_VERSION=$(uname -r | cut -d'-' -f1)
-echo "Kernel version: $KERNEL_VERSION"
-if [[ $(echo "$KERNEL_VERSION" | cut -d'.' -f1) -ge 5 && $(echo "$KERNEL_VERSION" | cut -d'.' -f2) -ge 10 ]]; then
-    echo "✅ Kernel version supports GPU"
+# Check NVIDIA driver
+echo ""
+echo "🎮 NVIDIA Driver Check:"
+if command -v nvidia-smi &> /dev/null; then
+    echo "✅ nvidia-smi available"
+    nvidia-smi --query-gpu=name,driver_version,cuda_version --format=csv,noheader,nounits
+    echo ""
+    echo "GPU Devices:"
+    nvidia-smi -L
 else
-    echo "⚠️  Older kernel - GPU support may be limited"
-fi
-echo
-
-# Check if NVIDIA driver stub is available
-echo "NVIDIA Driver Stub Check:"
-if [ -f /usr/lib/wsl/lib/libcuda.so.1 ]; then
-    echo "✅ NVIDIA driver stub found: /usr/lib/wsl/lib/libcuda.so.1"
-else
-    echo "❌ NVIDIA driver stub NOT found"
-    echo "Install NVIDIA Windows drivers (R495+) on Windows host"
+    echo "❌ nvidia-smi not found"
+    echo "Install NVIDIA drivers on Windows host"
 fi
 
-if [ -f /usr/lib/wsl/lib/nvidia-smi ]; then
-    echo "✅ nvidia-smi found: /usr/lib/wsl/lib/nvidia-smi"
-    echo "Running nvidia-smi from WSL location:"
-    /usr/lib/wsl/lib/nvidia-smi
+# Check CUDA installation
+echo ""
+echo "🚀 CUDA Installation Check:"
+if command -v nvcc &> /dev/null; then
+    echo "✅ nvcc available"
+    nvcc --version | grep "release"
 else
-    echo "⚠️  nvidia-smi not found at WSL location"
+    echo "⚠️  nvcc not found (may be normal if using container CUDA)"
 fi
-echo
 
-# Check if NVIDIA Container Toolkit is installed
-echo "NVIDIA Container Toolkit Check:"
+# Check CUDA libraries
+echo ""
+echo "📚 CUDA Libraries Check:"
+WSL_NVIDIA_PATHS=(
+    "/usr/lib/wsl/drivers"
+    "/usr/lib/wsl/lib"
+    "/usr/lib/x86_64-linux-gnu"
+    "/usr/local/cuda/lib64"
+)
+
+FOUND_LIBS=()
+for path in "${WSL_NVIDIA_PATHS[@]}"; do
+    if [[ -d "$path" ]]; then
+        LIBS=$(find "$path" -name "libcuda.so*" 2>/dev/null | head -3)
+        if [[ -n "$LIBS" ]]; then
+            echo "✅ Found CUDA libraries in $path:"
+            echo "$LIBS" | sed 's/^/   /'
+            FOUND_LIBS+=("$path")
+        fi
+    fi
+done
+
+if [[ ${#FOUND_LIBS[@]} -eq 0 ]]; then
+    echo "❌ No CUDA libraries found"
+else
+    echo ""
+    echo "Library paths with CUDA: ${FOUND_LIBS[*]}"
+fi
+
+# Check NVIDIA Container Toolkit
+echo ""
+echo "🐳 NVIDIA Container Toolkit Check:"
 if command -v nvidia-ctk &> /dev/null; then
-    echo "✅ nvidia-ctk found: $(which nvidia-ctk)"
-    nvidia-ctk --version
-else
-    echo "❌ nvidia-ctk NOT found"
-    echo "Install NVIDIA Container Toolkit in WSL2"
-fi
-echo
-
-# Check Podman configuration
-echo "Podman Configuration:"
-if command -v podman &> /dev/null; then
-    echo "✅ Podman found: $(which podman)"
-    podman --version
+    echo "✅ nvidia-ctk available"
+    echo "Version: $(nvidia-ctk --version)"
     
-    echo "Podman runtime configuration:"
-    podman info --format "{{.Host.OCIRuntime}}" 2>/dev/null || echo "Could not get runtime info"
-    
-    # Check if crun/runc supports GPU
-    echo "Container runtime GPU support:"
-    if podman info 2>/dev/null | grep -q "nvidia"; then
-        echo "✅ NVIDIA support detected in Podman"
+    # Check CDI configuration
+    if [[ -f /etc/cdi/nvidia.yaml ]]; then
+        echo "✅ CDI configuration exists"
+        echo "Available devices:"
+        nvidia-ctk cdi list 2>/dev/null | head -5 || echo "   (CDI list failed)"
     else
-        echo "⚠️  NVIDIA support not detected in Podman config"
+        echo "⚠️  CDI configuration missing"
+        echo "Run: sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml"
+    fi
+else
+    echo "❌ nvidia-ctk not found"
+    echo "Install NVIDIA Container Toolkit"
+fi
+
+# Check Podman
+echo ""
+echo "🐳 Podman Check:"
+if command -v podman &> /dev/null; then
+    echo "✅ Podman available"
+    echo "Version: $(podman --version)"
+    
+    if podman info &>/dev/null; then
+        echo "✅ Podman daemon accessible"
+        
+        # Test GPU device access
+        echo "Testing GPU device access..."
+        if podman run --rm --device nvidia.com/gpu=all --security-opt=label=disable \
+           nvidia/cuda:12.0-base-ubuntu20.04 nvidia-smi -L 2>/dev/null; then
+            echo "✅ GPU device access working!"
+        else
+            echo "⚠️  GPU device access failed"
+            echo "This may be due to missing CDI configuration or container issues"
+        fi
+    else
+        echo "⚠️  Podman daemon not accessible"
+        echo "Try: podman machine start"
     fi
 else
     echo "❌ Podman not found"
 fi
-echo
 
-# Test GPU access directly
-echo "Direct GPU Access Test:"
-echo "Testing direct CUDA access..."
-if /usr/lib/wsl/lib/nvidia-smi > /dev/null 2>&1; then
-    echo "✅ Direct GPU access works"
+# Check Python/PyTorch if available
+echo ""
+echo "🐍 Python/PyTorch Check:"
+if command -v python3 &> /dev/null; then
+    echo "✅ Python3 available: $(python3 --version)"
+    
+    # Check if PyTorch is available
+    if python3 -c "import torch" 2>/dev/null; then
+        echo "✅ PyTorch available"
+        TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null)
+        echo "PyTorch version: $TORCH_VERSION"
+        
+        # Check CUDA availability in PyTorch
+        CUDA_AVAILABLE=$(python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null)
+        CUDA_COUNT=$(python3 -c "import torch; print(torch.cuda.device_count())" 2>/dev/null)
+        
+        if [[ "$CUDA_AVAILABLE" == "True" ]]; then
+            echo "✅ PyTorch CUDA available"
+            echo "CUDA devices: $CUDA_COUNT"
+            python3 -c "import torch; print('CUDA version:', torch.version.cuda)" 2>/dev/null
+        else
+            echo "❌ PyTorch CUDA not available"
+            echo "This is the main issue - PyTorch cannot access CUDA runtime"
+        fi
+    else
+        echo "⚠️  PyTorch not available"
+    fi
 else
-    echo "❌ Direct GPU access failed"
-    echo "Check Windows NVIDIA drivers (need R495+)"
+    echo "⚠️  Python3 not found"
 fi
-echo
 
-# Test GPU access via container
-echo "Container GPU Access Test:"
-echo "Testing GPU access via Podman..."
-if podman run --rm --device nvidia.com/gpu=all docker.io/nvidia/cuda:12.9.1-base-ubi9 nvidia-smi > /dev/null 2>&1; then
-    echo "✅ Container GPU access works!"
+# Environment variables check
+echo ""
+echo "🌍 Environment Variables:"
+echo "CUDA_HOME: ${CUDA_HOME:-'not set'}"
+echo "PATH: ${PATH}"
+echo "LD_LIBRARY_PATH: ${LD_LIBRARY_PATH:-'not set'}"
+echo "NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-'not set'}"
+
+# Summary
+echo ""
+echo "📊 Summary:"
+if command -v nvidia-smi &> /dev/null; then
+    echo "✅ NVIDIA drivers working"
 else
-    echo "❌ Container GPU access failed"
-    echo "This is the issue we need to fix"
+    echo "❌ NVIDIA drivers issue"
 fi
-echo
 
-echo "=== Recommendations ==="
-echo
-echo "For WSL2 + Podman + GPU to work, you need:"
-echo "1. ✅ Windows NVIDIA drivers R495+ (installed on Windows host)"
-echo "2. ✅ WSL2 with kernel 5.10.16.3+ (update with: wsl --update)"
-echo "3. ❓ NVIDIA Container Toolkit in WSL2"
-echo "4. ❓ Podman configured for GPU passthrough"
-echo
-echo "Next steps if GPU doesn't work:"
-echo "• Install NVIDIA Container Toolkit in WSL2"
-echo "• Configure Podman runtime for GPU support"
-echo "• Use --security-opt=label=disable with Podman"
+if [[ ${#FOUND_LIBS[@]} -gt 0 ]]; then
+    echo "✅ CUDA libraries found"
+else
+    echo "❌ CUDA libraries missing"
+fi
+
+if command -v nvidia-ctk &> /dev/null && [[ -f /etc/cdi/nvidia.yaml ]]; then
+    echo "✅ Container toolkit configured"
+else
+    echo "❌ Container toolkit needs setup"
+fi
+
+if command -v podman &> /dev/null && podman info &>/dev/null; then
+    echo "✅ Podman working"
+else
+    echo "❌ Podman needs setup"
+fi
+
+echo ""
+echo "💡 Recommendations:"
+echo "1. If PyTorch CUDA is not available, restart container with proper GPU mounts"
+echo "2. Ensure LD_LIBRARY_PATH includes WSL NVIDIA paths"
+echo "3. Use --device nvidia.com/gpu=all when running containers"
+echo "4. Check container has proper CUDA environment variables"
+echo ""

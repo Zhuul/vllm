@@ -1,68 +1,128 @@
-# run-vllm-dev.ps1
-# Launch a vLLM dev container with Podman, mounting your local fork and a persistent model cache.
-# Workaround: install NumPy and do a normal `pip install .` instead of editable mode to avoid setuptools_scm timeouts.
+#!/usr/bin/env pwsh
 
-# === Configuration ===
-$Network          = "llm-net"
-$ContainerName    = "vllm-dev"
-$PortMappingAPI   = "127.0.0.1:8000:8000"
-$PortMappingSSH   = "2222:22"
-$Gpus             = "--gpus all"
-$VolumeVLLM       = 'C:\sources\github\vllm:/workspace/vllm'       # your fork
-$ModelCacheVolume = 'C:\models\huggingface:/root/.cache/huggingface'  # persistent HF cache
-$EnvPytorchCuda   = 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True'
-$EnvToken        = 'HUGGINGFACE_HUB_TOKEN=your_huggingface_token_here' # Replace with your actual Hugging Face token.
-$EnvVLLM          = 'VLLM_USE_v1=1'
-$EnvDisableFlash  = 'VLLM_DISABLE_FLASH_ATTN=1'
-$ImageName        = "vllm/vllm-openai:latest"
-$Entrypoint       = "--entrypoint /bin/bash"
+# Script to run vLLM development container with GPU support
+# Uses vLLM's own requirements for automatic dependency management
 
-# === Inner shell commands ===
-#  - install SSH, sudo, build tools
-#  - create user1 and set password
-#  - install NumPy
-#  - install vLLM from source (pip install .)
-#  - test vLLM
-$InnerCommand = @"
-export DEBIAN_FRONTEND=noninteractive && \
-apt-get update && \
-apt-get install -y openssh-server sudo cmake ninja-build && \
-useradd -m user1 && \
-echo 'user1:zobizobi' | chpasswd && \
-mkdir -p /var/run/sshd && \
-echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && \
-echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config && \
-service ssh start && \
-git clone https://github.com/ohmybash/oh-my-bash.git ~/.oh-my-bash && \
-cp ~/.oh-my-bash/templates/bashrc.osh-template ~/.bashrc && \
-cd /workspace/vllm && \
-pip install numpy setuptools_scm && \
-pip install . && \
-echo 'import vllm; print(vllm.__version__)' > test_vllm.py && \
-python3 test_vllm.py --model tflsxyy/DeepSeek-V3-4bit-4layers
-"@
+param(
+    [switch]$Build,
+    [switch]$Interactive,
+    [string]$Command = "",
+    [switch]$Help
+)
 
-# Strip any Windows CR characters
-$InnerCommand = $InnerCommand -replace "`r",""
+# Default to interactive mode unless Command is specified
+if (!$Interactive -and [string]::IsNullOrEmpty($Command)) {
+    $Interactive = $true
+}
 
-# === Build and run the Podman command ===
-$PodmanCmd = @(
-  "podman run -d",
-  "--network $Network",
-  "--name $ContainerName",
-  "-p $PortMappingAPI",
-  "-p $PortMappingSSH",
-  "$Gpus",
-  "-v `"$VolumeVLLM`"",
-  "-v `"$ModelCacheVolume`"",
-  "-e `"$EnvPytorchCuda`"",
-  "-e `"$EnvToken`"",
-  "-e `"$EnvVLLM`"",
-  "-e `"$EnvDisableFlash`"",
-  "$Entrypoint",
-  "$ImageName",
-  "-c `"$InnerCommand`""
-) -join " "
+if ($Help) {
+    Write-Host "Usage: run-vllm-dev.ps1 [-Build] [-Interactive] [-Command <cmd>] [-Help]"
+    Write-Host ""
+    Write-Host "Options:"
+    Write-Host "  -Build        Build the container before running"
+    Write-Host "  -Interactive  Run in interactive mode (default)"
+    Write-Host "  -Command      Run specific command instead of interactive shell"
+    Write-Host "  -Help         Show this help message"
+    Write-Host ""
+    Write-Host "Examples:"
+    Write-Host "  .\run-vllm-dev.ps1 -Build                    # Build and run container"
+    Write-Host "  .\run-vllm-dev.ps1                           # Run container interactively"
+    Write-Host "  .\run-vllm-dev.ps1 -Command 'nvidia-smi'     # Run nvidia-smi"
+    Write-Host ""
+    Write-Host "Manual container access:"
+    Write-Host "  podman exec -it vllm-dev bash               # Connect to running container"
+    Write-Host "  podman run --rm -it --device=nvidia.com/gpu=all --name=vllm-dev -v `"`${PWD}:/workspace:Z`" vllm-dev:latest"
+    exit 0
+}
 
-Write-Host "`n▶ Executing Podman command:`n$PodmanCmd`n"
-Invoke-Expression $PodmanCmd
+$ContainerName = "vllm-dev"
+$ImageTag = "vllm-dev:latest"
+$SourceDir = $PWD
+
+Write-Host "🐋 vLLM Development Container" -ForegroundColor Green
+Write-Host "Source directory: $SourceDir"
+
+if ($Build) {
+    Write-Host "🔨 Building container..." -ForegroundColor Yellow
+    podman build -f extras/Dockerfile -t $ImageTag .
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "❌ Build failed!" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "✅ Build completed successfully!" -ForegroundColor Green
+}
+
+# Check if container is already running
+$runningContainer = podman ps --filter "name=$ContainerName" --format "{{.Names}}" 2>$null
+if ($runningContainer -eq $ContainerName) {
+    Write-Host "ℹ️  Container '$ContainerName' is already running" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "To connect to the running container:" -ForegroundColor Yellow
+    Write-Host "  podman exec -it $ContainerName bash" -ForegroundColor White
+    Write-Host ""
+    Write-Host "To stop the running container:" -ForegroundColor Yellow
+    Write-Host "  podman stop $ContainerName" -ForegroundColor White
+    Write-Host ""
+    
+    if (![string]::IsNullOrEmpty($Command)) {
+        Write-Host "🚀 Running command in existing container: $Command" -ForegroundColor Green
+        & podman exec $ContainerName bash -c "source /home/vllmuser/venv/bin/activate && $Command"
+        exit $LASTEXITCODE
+    } else {
+        $response = Read-Host "Connect to running container? [Y/n]"
+        if ($response -eq "" -or $response -eq "Y" -or $response -eq "y") {
+            & podman exec -it $ContainerName bash
+            exit $LASTEXITCODE
+        } else {
+            Write-Host "Container remains running. Use the commands above to interact with it." -ForegroundColor Gray
+            exit 0
+        }
+    }
+}
+
+# Check if image exists
+podman image exists $ImageTag
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "❌ Image $ImageTag not found. Run with -Build to create it." -ForegroundColor Red
+    exit 1
+}
+
+# Container run arguments
+$RunArgs = @(
+    "run", "--rm"
+    "--device=nvidia.com/gpu=all"
+    "--name=$ContainerName"
+    "-v", "${SourceDir}:/workspace:Z"
+    "-w", "/workspace"
+    "--user", "vllmuser"
+    "-e", "NVIDIA_VISIBLE_DEVICES=all"
+    "-e", "CUDA_VISIBLE_DEVICES=0"
+)
+
+if ($Interactive -and [string]::IsNullOrEmpty($Command)) {
+    $RunArgs += @("-it", $ImageTag, "bash")
+    Write-Host "🚀 Starting interactive container..." -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Once started, you'll be inside the container. Useful commands:" -ForegroundColor Cyan
+    Write-Host "  python /workspace/extras/final_environment_test.py    # Test environment" -ForegroundColor White
+    Write-Host "  ./extras/dev-setup.sh                               # Setup vLLM for development" -ForegroundColor White
+    Write-Host "  python -c 'import torch; print(torch.__version__)'   # Check PyTorch version" -ForegroundColor White
+    Write-Host ""
+} elseif (![string]::IsNullOrEmpty($Command)) {
+    $RunArgs += @($ImageTag, "bash", "-c", "source /home/vllmuser/venv/bin/activate && $Command")
+    Write-Host "🚀 Running command: $Command" -ForegroundColor Green
+} else {
+    $RunArgs += @($ImageTag)
+    Write-Host "🚀 Starting container..." -ForegroundColor Green
+}
+
+# Run the container
+Write-Host "Running: podman $($RunArgs -join ' ')"
+& podman @RunArgs
+
+# Show connection info after container exits
+if ($LASTEXITCODE -eq 0 -and $Interactive) {
+    Write-Host ""
+    Write-Host "Container exited successfully." -ForegroundColor Green
+    Write-Host "To reconnect, run: .\extras\run-vllm-dev.ps1" -ForegroundColor Cyan
+}
