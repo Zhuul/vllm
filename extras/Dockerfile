@@ -121,15 +121,17 @@ ENV CMAKE_BUILD_PARALLEL_LEVEL=4
 ENV VLLM_INSTALL_PUNICA_KERNELS=0
 ENV MAX_JOBS=4
 
-# RTX 5090 (sm_120) support - critical for latest GPUs
+# RTX 5090 (sm_120) support - critical for latest GPUs.
+# NOTE: Keep a single definitive TORCH_CUDA_ARCH_LIST including legacy + sm_120.
+# Avoid redefining later (previous duplicate removed) so sm_120 isn't lost.
 ENV TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0;12.0"
+# Default disable Machete so build can proceed on non-Hopper targets; can be re-enabled via runtime -e CMAKE_ARGS or build arg.
 ENV CMAKE_ARGS="-DENABLE_MACHETE=OFF"
 
 # WSL2-specific CUDA environment configuration
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV LD_LIBRARY_PATH=/usr/lib/wsl/drivers:/usr/lib/wsl/lib:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:/usr/local/cuda/lib:$LD_LIBRARY_PATH
-ENV TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6;8.9;9.0+PTX"
 
 # Add runtime library detection script
 RUN echo '#!/bin/bash' > /home/vllmuser/check_cuda_libs.sh && \

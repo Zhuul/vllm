@@ -61,7 +61,7 @@ echo "🔧 Configuring build for existing PyTorch..."
 python use_existing_torch.py
 
 # Install build requirements
-echo "📋 Installing build requirements..."
+echo "📋 Installing build requirements (may include machete deps only if enabled)..."
 pip install -r requirements/build.txt
 
 # Set build environment for RTX 5090
@@ -69,14 +69,18 @@ export MAX_JOBS=4
 export VLLM_TARGET_DEVICE=cuda
 export SETUPTOOLS_SCM_PRETEND_VERSION="0.10.1.dev+cu129"
 export FETCHCONTENT_BASE_DIR=/tmp/vllm-build/deps
-export CMAKE_ARGS="-DENABLE_MACHETE=OFF"
+if [ -z "${ENABLE_MACHETE}" ]; then
+    # Caller can set ENABLE_MACHETE=ON to force building; default OFF for experimental GPUs
+    ENABLE_MACHETE=OFF
+fi
+export CMAKE_ARGS="-DENABLE_MACHETE=${ENABLE_MACHETE}"
 export VLLM_INSTALL_PUNICA_KERNELS=0
 mkdir -p $FETCHCONTENT_BASE_DIR
 
 echo "🔧 Build environment configured:"
 echo "  TORCH_CUDA_ARCH_LIST: $TORCH_CUDA_ARCH_LIST"
 echo "  MAX_JOBS: $MAX_JOBS"
-echo "  CMAKE_ARGS: $CMAKE_ARGS"
+echo "  CMAKE_ARGS: $CMAKE_ARGS (ENABLE_MACHETE=${ENABLE_MACHETE})"
 echo "  FETCHCONTENT_BASE_DIR: $FETCHCONTENT_BASE_DIR"
 
 # Build and install vLLM

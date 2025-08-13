@@ -13,6 +13,16 @@ cmake_minimum_required(VERSION 3.26)
 # cmake --install . --component _C
 project(vllm_extensions LANGUAGES CXX)
 
+# Option toggles
+#
+# ENABLE_MACHETE: Controls whether to build the Machete quantization kernels.
+# Upstream logic previously always attempted generation when Hopper (sm90a)
+# architectures were present which made it impossible to bypass via CMAKE_ARGS.
+# We introduce an explicit option so builds targeting experimental future
+# architectures (e.g. sm_120 / Blackwell successor) can proceed while Hopper
+# specific code paths are unstable or failing.
+option(ENABLE_MACHETE "Build Machete quantization kernels (requires Hopper sm90a)" ON)
+
 # CUDA by default, can be overridden by using -DVLLM_TARGET_DEVICE=... (used by setup.py)
 set(VLLM_TARGET_DEVICE "cuda" CACHE STRING "Target device backend for vLLM")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
@@ -682,7 +692,7 @@ if(VLLM_GPU_LANG STREQUAL "CUDA")
   # The machete kernels only work on hopper and require CUDA 12.0 or later.
   # Only build Machete kernels if we are building for something compatible with sm90a
   cuda_archs_loose_intersection(MACHETE_ARCHS "9.0a" "${CUDA_ARCHS}")
-  if(${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL 12.0 AND MACHETE_ARCHS)
+  if(ENABLE_MACHETE AND ${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL 12.0 AND MACHETE_ARCHS)
     #
     # For the Machete kernels we automatically generate sources for various
     # preselected input type pairs and schedules.
