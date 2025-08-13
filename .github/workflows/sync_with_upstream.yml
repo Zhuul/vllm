@@ -36,16 +36,16 @@ jobs:
             echo "Merge conflict detected. Creating a new branch for manual resolution."
             git checkout -b merge-conflict-$(date +%Y%m%d%H%M%S)
             git push origin HEAD
-            echo "conflict=true" >> $GITHUB_OUTPUT
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
             exit 1
           }
-          echo "conflict=false" >> $GITHUB_OUTPUT
+          echo "conflict=false" >> "$GITHUB_OUTPUT"
 
       - name: Check for workflow file changes
         id: workflow_change
         run: |
           if git diff --name-only upstream/main | grep '^.github/workflows/'; then
-            echo "workflow_changed=true" >> $GITHUB_OUTPUT
+            echo "workflow_changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "workflow_changed=false" >> "$GITHUB_OUTPUT"
           fi
