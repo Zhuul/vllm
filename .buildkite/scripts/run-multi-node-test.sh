@@ -49,26 +49,10 @@ start_nodes() {
         # 3. map the huggingface cache directory to the container
         # 3. assign ip addresses to the containers (head node: 192.168.10.10, worker nodes:
         #    starting from 192.168.10.11)
-        retry_count=0
-        max_retries=3
-        while [ $retry_count -lt $max_retries ]; do
-            if docker run -d --gpus "$GPU_DEVICES" --shm-size=10.24gb -e HF_TOKEN \
-                -v ~/.cache/huggingface:/root/.cache/huggingface --name "node$node" \
-                --network docker-net --ip 192.168.10.$((10 + $node)) --rm "$DOCKER_IMAGE" \
-                /bin/bash -c "tail -f /dev/null"; then
-                echo "Successfully started node$node"
-                break
-            else
-                echo "Failed to start node$node. Retrying..."
-                retry_count=$((retry_count + 1))
-                sleep 5
-            fi
-        done
-
-        if [ $retry_count -eq $max_retries ]; then
-            echo "Failed to start node$node after $max_retries attempts."
-            exit 1
-        fi
+        docker run -d --gpus "$GPU_DEVICES" --shm-size=10.24gb -e HF_TOKEN \
+            -v ~/.cache/huggingface:/root/.cache/huggingface --name "node$node" \
+            --network docker-net --ip 192.168.10.$((10 + $node)) --rm "$DOCKER_IMAGE" \
+            /bin/bash -c "tail -f /dev/null"
 
         # organize containers into a ray cluster
         if [ "$node" -eq 0 ]; then
@@ -121,3 +105,4 @@ trap cleanup EXIT
 start_network
 start_nodes
 run_nodes
+
