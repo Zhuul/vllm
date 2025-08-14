@@ -7,6 +7,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -50,11 +54,13 @@ jobs:
             echo "workflow_changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Set up PAT authentication
+      - name: Configure push authentication
         env:
-          GH_PAT: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          git remote set-url origin https://Zhuul:${GH_PAT}@github.com/Zhuul/vllm.git
+          git remote set-url origin https://${GITHUB_ACTOR}:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
 
       - name: Push changes if no workflow files changed
         if: steps.workflow_change.outputs.workflow_changed == 'false' && steps.merge.outputs.conflict == 'false'
@@ -64,7 +70,7 @@ jobs:
         if: steps.workflow_change.outputs.workflow_changed == 'true' && steps.merge.outputs.conflict == 'false'
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.GH_PAT }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "Sync with upstream: update workflow files"
           title: "Sync with upstream: update workflow files"
           body: |
