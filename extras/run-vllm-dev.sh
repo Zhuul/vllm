@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Unified lightweight vLLM dev container launcher (bash)
-# - Auto-detects container engine: podman (preferred) else docker
+# - Podman-only (no Docker)
 # - Minimal flags; environment baked into image/Dockerfile
 # - Supports build (-b), GPU check (-g), command (-c), help (-h)
 
@@ -18,6 +18,8 @@ Options:
   -b, --build        Build (or rebuild) the image first
   -c, --command CMD  Run CMD inside container then exit
   -g, --gpu-check    Run lightweight GPU diagnostics inside container
+  -s, --setup        Run ./extras/dev-setup.sh inside container
+  -m, --mirror       Copy sources into container (LOCAL_MIRROR=1) for faster build on slow mounts
   -h, --help         Show this help and exit
   -n, --name NAME    Override container name (default: ${CONTAINER_NAME})
 
@@ -31,14 +33,18 @@ EOF
 
 BUILD=0
 GPU_CHECK=0
+SETUP=0
 CMD=""
+MIRROR=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -b|--build) BUILD=1; shift ;;
     -c|--command) CMD="$2"; shift 2 ;;
-    -g|--gpu-check) GPU_CHECK=1; shift ;;
-    -h|--help) show_help; exit 0 ;;
+  -g|--gpu-check) GPU_CHECK=1; shift ;;
+  -s|--setup) SETUP=1; shift ;;
+  -h|--help) show_help; exit 0 ;;
+  -m|--mirror) MIRROR=1; shift ;;
     -n|--name) CONTAINER_NAME="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; show_help; exit 1 ;;
   esac
@@ -47,8 +53,6 @@ done
 # Detect engine
 if command -v podman >/dev/null 2>&1; then
   ENGINE=podman
-elif command -v docker >/dev/null 2>&1; then
-  ENGINE=docker
 else
   echo "Error: neither podman nor docker found in PATH" >&2
   exit 1
@@ -66,17 +70,17 @@ if [[ $BUILD -eq 1 ]]; then
 fi
 
 # If container running, attach / exec
-if [[ "$ENGINE" == "docker" ]]; then
-  RUNNING=$($ENGINE ps --filter "name=${CONTAINER_NAME}" --format '{{.Names}}' 2>/dev/null || true)
-else
-  RUNNING=$($ENGINE ps --filter "name=${CONTAINER_NAME}" --format '{{.Names}}' 2>/dev/null || true)
-fi
+RUNNING=$($ENGINE ps --filter "name=${CONTAINER_NAME}" --format '{{.Names}}' 2>/dev/null || true)
 
 if [[ "$RUNNING" == "$CONTAINER_NAME" ]]; then
   if [[ $GPU_CHECK -eq 1 ]]; then
     echo "[vLLM] GPU check (existing container)";
     $ENGINE exec "$CONTAINER_NAME" bash -lc 'source /home/vllmuser/venv/bin/activate 2>/dev/null || true; which nvidia-smi && nvidia-smi || true; python - <<PY\nimport torch, os\nprint("PyTorch:", getattr(torch, "__version__", "n/a"))\nprint("CUDA available:", torch.cuda.is_available())\nprint("Devices:", torch.cuda.device_count() if torch.cuda.is_available() else 0)\nif torch.cuda.is_available():\n    try: print("GPU 0:", torch.cuda.get_device_name(0))\n    except Exception as e: print("GPU name error:", e)\nPY'
     exit $?
+  fi
+  if [[ $SETUP -eq 1 ]]; then
+    echo "[vLLM] Running dev setup in existing container"
+    exec $ENGINE exec "$CONTAINER_NAME" bash -lc 'chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh'
   fi
   if [[ -n "$CMD" ]]; then
     echo "[vLLM] Exec command in existing container"
@@ -93,27 +97,23 @@ fi
 
 # Ensure image exists if not building
 if [[ $BUILD -ne 1 ]]; then
-  if [[ "$ENGINE" == "docker" ]]; then
-    if ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
-      echo "Image $IMAGE_TAG missing. Use --build." >&2; exit 1
-    fi
-  else
-    if ! podman image exists "$IMAGE_TAG"; then
-      echo "Image $IMAGE_TAG missing. Use --build." >&2; exit 1
-    fi
+  if ! podman image exists "$IMAGE_TAG"; then
+    echo "Image $IMAGE_TAG missing. Use --build." >&2; exit 1
   fi
 fi
 
 # Base run args (env baked into image; minimal extras)
-if [[ "$ENGINE" == "docker" ]]; then
-  RUN_ARGS=(run --rm --gpus all --name "$CONTAINER_NAME" -v "${SOURCE_DIR}:/workspace" -w /workspace --user vllmuser)
-else
-  RUN_ARGS=(run --rm --device=nvidia.com/gpu=all --security-opt=label=disable --name "$CONTAINER_NAME" -v "${SOURCE_DIR}:/workspace:Z" -w /workspace --user vllmuser)
-fi
+RUN_ARGS=(run --rm --device=nvidia.com/gpu=all --security-opt=label=disable --shm-size 8g --tmpfs /tmp:size=8g --name "$CONTAINER_NAME" -v "${SOURCE_DIR}:/workspace:Z" -w /workspace --user vllmuser)
 
 if [[ $GPU_CHECK -eq 1 ]]; then
   GPU_SCRIPT=$'echo "=== GPU Check ==="; which nvidia-smi && nvidia-smi || true; source /home/vllmuser/venv/bin/activate 2>/dev/null || true; python - <<PY\nimport torch, os\nprint("PyTorch:", getattr(torch, "__version__", "n/a"))\nprint("CUDA available:", torch.cuda.is_available())\nprint("Devices:", torch.cuda.device_count() if torch.cuda.is_available() else 0)\nif torch.cuda.is_available():\n    try: print("GPU 0:", torch.cuda.get_device_name(0))\n    except Exception as e: print("GPU name error:", e)\nPY'
   RUN_ARGS+=("$IMAGE_TAG" bash -lc "$GPU_SCRIPT")
+elif [[ $SETUP -eq 1 ]]; then
+  if [[ $MIRROR -eq 1 ]]; then
+    RUN_ARGS+=("$IMAGE_TAG" bash -lc 'export LOCAL_MIRROR=1; chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh')
+  else
+    RUN_ARGS+=("$IMAGE_TAG" bash -lc 'chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh')
+  fi
 elif [[ -n "$CMD" ]]; then
   RUN_ARGS+=("$IMAGE_TAG" bash -lc "source /home/vllmuser/venv/bin/activate 2>/dev/null || true; $CMD")
 else

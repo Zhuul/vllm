@@ -15,7 +15,7 @@ ENV CUDNN_INCLUDE_PATH=/usr/include
 # Install system packages with additional CUDA development libraries
 RUN dnf update -y && dnf install --allowerasing -y \
     python3 python3-pip python3-devel \
-    git gcc gcc-c++ cmake ninja-build \
+    git gcc gcc-c++ cmake ninja-build ccache \
     make patch which findutils tar \
     wget curl vim nano \
     && dnf clean all
@@ -38,6 +38,7 @@ RUN chown -R vllmuser:vllmuser /workspace
 RUN mkdir -p /workspace/.deps && chown -R vllmuser:vllmuser /workspace/.deps && \
     mkdir -p /tmp/vllm-build && chmod 777 /tmp/vllm-build && \
     mkdir -p /home/vllmuser/.cache && chown -R vllmuser:vllmuser /home/vllmuser/.cache && \
+    mkdir -p /home/vllmuser/.ccache && chown -R vllmuser:vllmuser /home/vllmuser/.ccache && \
     mkdir -p /home/vllmuser/.cmake && chown -R vllmuser:vllmuser /home/vllmuser/.cmake && \
     chmod -R 755 /workspace && \
     chmod -R 777 /tmp
@@ -54,29 +55,25 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV PIP_NO_CACHE_DIR=1
 ENV PYTHONUNBUFFERED=1
+ENV PIP_DEFAULT_TIMEOUT=120
+ENV PIP_RETRIES=5
+ENV PIP_PREFER_BINARY=1
 
 # Upgrade pip and setuptools to latest versions
 RUN pip install --upgrade pip setuptools>=61 wheel
 
-# Copy vLLM requirements to leverage the project's own dependency management
 COPY requirements/ /tmp/requirements/
 
-# Install PyTorch nightly (includes latest GPU arch support such as Blackwell sm_120 when present)
+# Install PyTorch nightly first (includes latest GPU arch support such as Blackwell sm_120 when present)
 RUN pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129
 
-# Install modern build tools and vLLM's build dependencies
+# Install modern build tools and vLLM's build dependencies and CUDA deps early
 COPY pyproject.toml /tmp/pyproject.toml
-RUN cd /tmp && pip install "setuptools>=61" "setuptools-scm>=8" build wheel ninja cmake
+RUN cd /tmp && pip install "setuptools>=61" "setuptools-scm>=8" build wheel ninja cmake \
+    && pip install -r /tmp/requirements/build.txt -r /tmp/requirements/cuda.txt -r /tmp/requirements/common.txt
 
-# Install vLLM's common dependencies
-RUN pip install -r /tmp/requirements/common.txt
-
-# Install additional development dependencies
-RUN pip install \
-    pytest pytest-asyncio \
-    accelerate \
-    datasets \
-    jupyter ipython
+# Install minimal development extras
+RUN pip install pytest pytest-asyncio ipython
 
 # Note: vLLM will be installed from source in development mode via dev-setup.sh
 # This ensures compatibility with the PyTorch nightly build
@@ -120,8 +117,12 @@ ENV CMAKE_BUILD_PARALLEL_LEVEL=4
 ENV VLLM_INSTALL_PUNICA_KERNELS=0
 ENV MAX_JOBS=4
 
+# Enable ccache for faster rebuilds
+ENV CCACHE_DIR=/home/vllmuser/.ccache
+ENV CCACHE_MAXSIZE=10G
+ENV PATH=/usr/lib64/ccache:$PATH
+
 # CUDA arch list including legacy + latest (sm_120) so builds cover both older and newest GPUs.
-# Using space-separated style (matches upstream main Dockerfile) for consistency.
 ENV TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0 12.0"
 # Do not force-disable Machete; allow upstream defaults. User may still pass -e CMAKE_ARGS for custom CMake settings.
 ENV CMAKE_ARGS=""
@@ -129,7 +130,7 @@ ENV CMAKE_ARGS=""
 # WSL2-specific CUDA environment configuration
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
-ENV LD_LIBRARY_PATH=/usr/lib/wsl/drivers:/usr/lib/wsl/lib:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:/usr/local/cuda/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/lib/wsl/drivers:/usr/lib/wsl/lib:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:/usr/local/cuda/lib:$LD_LIBRARY_PATH
 
 # Add runtime library detection script
 RUN echo '#!/bin/bash' > /home/vllmuser/check_cuda_libs.sh && \

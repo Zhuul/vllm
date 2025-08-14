@@ -9,54 +9,44 @@ param(
     [switch]$Build,
     [switch]$Interactive,
     [string]$Command = "",
+    [switch]$Setup,
     [switch]$GPUCheck,
     [switch]$Help,
-    [ValidateSet('auto','docker','podman')][string]$Engine = 'auto'
+    [ValidateSet('podman')][string]$Engine = 'podman'
 )
 
 if ($Help) {
-    Write-Host "Usage: run-vllm-dev.ps1 [-Build] [-Interactive] [-Command <cmd>] [-GPUCheck] [-Engine auto|docker|podman] [-Help]"
+    Write-Host "Usage: run-vllm-dev.ps1 [-Build] [-Interactive] [-Command <cmd>] [-Setup] [-GPUCheck] [-Help]"
     Write-Host ""
     Write-Host "Examples:" 
     Write-Host '  .\run-vllm-dev.ps1 -Build'
     # Use double quotes for python -c and single quotes inside for Python code; escaping via doubling single quotes in literal PS string
     Write-Host '  .\run-vllm-dev.ps1 -Command "python -c ''import torch;print(torch.cuda.is_available())''"'
     Write-Host '  .\run-vllm-dev.ps1 -GPUCheck'
-    Write-Host '  .\run-vllm-dev.ps1 -GPUCheck -Engine podman'
+    Write-Host '  .\run-vllm-dev.ps1 -Setup    # runs ./extras/dev-setup.sh inside the container'
     exit 0
 }
 
-if (-not $Interactive -and [string]::IsNullOrEmpty($Command) -and -not $GPUCheck) { $Interactive = $true }
+if (-not $Interactive -and [string]::IsNullOrEmpty($Command) -and -not $GPUCheck -and -not $Setup) { $Interactive = $true }
 
-# Detect / resolve engine
-if ($Engine -eq 'auto') {
-    if (Get-Command podman -ErrorAction SilentlyContinue) { $Engine = "podman" }
-    elseif (Get-Command docker -ErrorAction SilentlyContinue) { $Engine = "docker" }
-    else { Write-Host "❌ Neither podman nor docker found" -ForegroundColor Red; exit 1 }
-} else {
-    if (-not (Get-Command $Engine -ErrorAction SilentlyContinue)) { Write-Host "❌ Requested engine '$Engine' not found" -ForegroundColor Red; exit 1 }
-}
+if (-not (Get-Command podman -ErrorAction SilentlyContinue)) { Write-Host "❌ Podman not found in PATH" -ForegroundColor Red; exit 1 }
 
 $ContainerName = "vllm-dev"
 $ImageTag = "vllm-dev:latest"
 $SourceDir = $PWD
 
-Write-Host "🐋 vLLM Dev Container (engine: $Engine)" -ForegroundColor Green
+Write-Host "🐋 vLLM Dev Container (Podman)" -ForegroundColor Green
 
 if ($Build) {
     Write-Host "🔨 Building image..." -ForegroundColor Yellow
     $buildCmd = @("build","-f","extras/Dockerfile","-t",$ImageTag,".")
-    if ($Engine -eq "docker") { & docker @buildCmd } else { & podman @buildCmd }
+    & podman @buildCmd
     if ($LASTEXITCODE -ne 0) { Write-Host "❌ Build failed" -ForegroundColor Red; exit 1 }
     Write-Host "✅ Build ok" -ForegroundColor Green
 }
 
 # Already running?
-if ($Engine -eq "docker") {
-    $running = docker ps --filter "name=$ContainerName" --format "{{.Names}}" 2>$null
-} else {
-    $running = podman ps --filter "name=$ContainerName" --format "{{.Names}}" 2>$null
-}
+$running = podman ps --filter "name=$ContainerName" --format "{{.Names}}" 2>$null
 
 if ($running -eq $ContainerName) {
     if ($GPUCheck) {
@@ -75,42 +65,37 @@ if torch.cuda.is_available():
 PY
 nvidia-smi || true
 '@
-        if ($Engine -eq "docker") { docker exec $ContainerName bash -c $cmd } else { podman exec $ContainerName bash -c $cmd }
+    podman exec $ContainerName bash -c $cmd
+        exit $LASTEXITCODE
+    }
+    if ($Setup) {
+        Write-Host "🔧 Running dev setup in existing container" -ForegroundColor Yellow
+        podman exec $ContainerName bash -lc 'chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh'
         exit $LASTEXITCODE
     }
     if ($Command) {
         Write-Host "🚀 Running command in existing container" -ForegroundColor Green
         $runCmd = "source /home/vllmuser/venv/bin/activate && $Command"
-        if ($Engine -eq "docker") { docker exec $ContainerName bash -c $runCmd } else { podman exec $ContainerName bash -c $runCmd }
+    podman exec $ContainerName bash -c $runCmd
         exit $LASTEXITCODE
     }
     $resp = Read-Host "Attach to running container? [Y/n]"
-    if ($resp -eq "" -or $resp -match '^[Yy]$') { if ($Engine -eq "docker") { docker exec -it $ContainerName bash } else { podman exec -it $ContainerName bash }; exit $LASTEXITCODE } else { exit 0 }
+    if ($resp -eq "" -or $resp -match '^[Yy]$') { podman exec -it $ContainerName bash; exit $LASTEXITCODE } else { exit 0 }
 }
 
 # Ensure image exists
-if ($Engine -eq "docker") {
-    $img = docker images --format "{{.Repository}}:{{.Tag}}" | Select-String "^$ImageTag$"
-    if (-not $img) { Write-Host "❌ Image missing. Use -Build." -ForegroundColor Red; exit 1 }
-} else {
-    podman image exists $ImageTag
-    if ($LASTEXITCODE -ne 0) { Write-Host "❌ Image missing. Use -Build." -ForegroundColor Red; exit 1 }
-}
+podman image exists $ImageTag
+if ($LASTEXITCODE -ne 0) { Write-Host "❌ Image missing. Use -Build." -ForegroundColor Red; exit 1 }
 
 # Base args
-if ($Engine -eq "docker") {
-    $runArgs = @("run","--rm","--name=$ContainerName","--gpus","all","-v","${SourceDir}:/workspace","-w","/workspace","--user","vllmuser")
-} else {
-    $runArgs = @("run","--rm","--security-opt=label=disable","--device=nvidia.com/gpu=all","-v","${SourceDir}:/workspace:Z","-w","/workspace","--name=$ContainerName","--user","vllmuser","--env","ENGINE=podman")
-    foreach ($ev in 'NVIDIA_VISIBLE_DEVICES','NVIDIA_DRIVER_CAPABILITIES','NVIDIA_REQUIRE_CUDA') {
-        $val = [Environment]::GetEnvironmentVariable($ev)
-        if ($val) { $runArgs += @('--env',"$ev=$val") }
-    }
-    # Force override to avoid 'void' value injected by failing hooks
-    $runArgs += @('--env','NVIDIA_VISIBLE_DEVICES=all','--env','NVIDIA_DRIVER_CAPABILITIES=compute,utility')
+$runArgs = @("run","--rm","--security-opt=label=disable","--device=nvidia.com/gpu=all","--shm-size","8g","--tmpfs","/tmp:size=8g","-v","${SourceDir}:/workspace:Z","-w","/workspace","--name=$ContainerName","--user","vllmuser","--env","ENGINE=podman")
+foreach ($ev in 'NVIDIA_VISIBLE_DEVICES','NVIDIA_DRIVER_CAPABILITIES','NVIDIA_REQUIRE_CUDA') {
+    $val = [Environment]::GetEnvironmentVariable($ev)
+    if ($val) { $runArgs += @('--env',"$ev=$val") }
 }
+# Force override to avoid 'void' value injected by failing hooks
+$runArgs += @('--env','NVIDIA_VISIBLE_DEVICES=all','--env','NVIDIA_DRIVER_CAPABILITIES=compute,utility')
 
-echo '=== GPU Check ==='
 if ($GPUCheck) {
         $gpuScript = @"
 echo '=== GPU Check ==='
@@ -140,19 +125,22 @@ else:
 print(json.dumps(out,indent=2))
 PY
 "@
-        $runArgs += @($ImageTag,"bash","-c",$gpuScript)
+        $runArgs += @($ImageTag,"bash","-lc",$gpuScript)
+} elseif ($Setup) {
+    $runArgs += @($ImageTag,"bash","-lc","chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh")
+    Write-Host "🔧 Running dev setup" -ForegroundColor Green
 } elseif ($Interactive -and -not $Command) {
     $runArgs += @("-it",$ImageTag,"bash")
     Write-Host "🚀 Interactive shell" -ForegroundColor Green
 } elseif ($Command) {
-    $runArgs += @($ImageTag,"bash","-c","source /home/vllmuser/venv/bin/activate && $Command")
+    $runArgs += @($ImageTag,"bash","-lc","source /home/vllmuser/venv/bin/activate && $Command")
     Write-Host "🚀 Running command" -ForegroundColor Green
 } else {
     $runArgs += @($ImageTag)
 }
 
-Write-Host "Command: $Engine $($runArgs -join ' ')" -ForegroundColor Gray
-if ($Engine -eq "docker") { & docker @runArgs } else { & podman @runArgs }
+Write-Host "Command: podman $($runArgs -join ' ')" -ForegroundColor Gray
+& podman @runArgs
 
 if ($LASTEXITCODE -eq 0 -and $Interactive) {
     Write-Host "Exited cleanly" -ForegroundColor Green

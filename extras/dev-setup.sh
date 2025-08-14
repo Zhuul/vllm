@@ -19,6 +19,18 @@ echo "📦 Current PyTorch:"
 python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}')" 2>/dev/null || echo "PyTorch not installed"
 echo ""
 
+### Optional: build from a local mirror to avoid slow Windows/virtiofs mounts during heavy C++ builds
+if [ "${LOCAL_MIRROR:-0}" = "1" ]; then
+    echo "📁 LOCAL_MIRROR=1 -> Copying sources from /workspace to /opt/work for faster builds..."
+    mkdir -p /opt/work
+    # Use tar pipeline (faster and preserves permissions)
+    tar -C /workspace -cf - . | tar -C /opt/work -xpf -
+    export VLLM_SRC_DIR=/opt/work
+else
+    export VLLM_SRC_DIR=/workspace
+fi
+echo "Source dir for build: ${VLLM_SRC_DIR}"
+
 # Install PyTorch with CUDA 12.9 for RTX 5090 support
 echo "🚀 Installing PyTorch nightly (CUDA 12.9 toolchain) ..."
 pip uninstall torch torchvision torchaudio -y 2>/dev/null || true
@@ -52,23 +64,24 @@ if torch.cuda.is_available():
 "
 echo ""
 
-# Install vLLM from source (required for RTX 5090 sm_120 support)
-echo "📦 Installing vLLM from source (editable)..."
+echo "📦 Preparing to install vLLM from source (editable)..."
 pip uninstall vllm -y 2>/dev/null || true
 
-# Use existing PyTorch installation approach
-echo "🔧 Configuring build for existing PyTorch..."
-python use_existing_torch.py
-
-# Install build requirements
-echo "📋 Installing build requirements (may include machete deps only if enabled)..."
-pip install -r requirements/build.txt
+# Preinstall pinned deps to avoid long resolver work (esp. numba/llvmlite)
+echo "📋 Installing pinned requirements (build + cuda + common)..."
+pip install -r requirements/build.txt -r requirements/cuda.txt -r requirements/common.txt
 
 # Build environment tuning
 export VLLM_TARGET_DEVICE=cuda
 export SETUPTOOLS_SCM_PRETEND_VERSION="0.10.1.dev+cu129"
 export FETCHCONTENT_BASE_DIR=/tmp/vllm-build/deps
 mkdir -p "$FETCHCONTENT_BASE_DIR"
+
+# ccache for faster rebuilds
+export CCACHE_DIR=/home/vllmuser/.ccache
+export CCACHE_MAXSIZE=10G
+export PATH=/usr/lib64/ccache:$PATH
+command -v ccache >/dev/null 2>&1 && ccache -s || true
 
 # Respect user-provided MAX_JOBS; otherwise derive a conservative default to avoid FA3 OOM (signal 9)
 if [ -z "${MAX_JOBS}" ]; then
@@ -104,6 +117,8 @@ fi
 
 # We no longer pass custom CMAKE_ARGS that refer to removed/unsupported options (e.g. ENABLE_MACHETE) to avoid noise.
 unset CMAKE_ARGS 2>/dev/null || true
+# Enable ccache via CMake compiler launchers (C/C++/CUDA)
+export CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache"
 
 # By default we DO NOT disable FA3; user may export VLLM_DISABLE_FA3=1 before invoking this script to skip it.
 if [ -z "${VLLM_DISABLE_FA3}" ]; then
@@ -120,7 +135,8 @@ echo "  FA3_MEMORY_SAFE_MODE: ${FA3_MEMORY_SAFE_MODE:-0}"
 
 # Build and install vLLM
 echo "🏗️  Building vLLM from source..."
-pip install --no-build-isolation -e .
+cd "$VLLM_SRC_DIR"
+pip install --no-build-isolation -e . -vv
 
 if [ $? -eq 0 ]; then
     echo "✅ vLLM editable install completed successfully"
