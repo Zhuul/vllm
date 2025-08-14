@@ -219,10 +219,8 @@ LOG_DST="$VLLM_SRC_DIR/extras/build.log"
 mkdir -p "$(dirname "$LOG_DST")" 2>/dev/null || true
 set -o pipefail
 TIMEFORMAT='⏱  Build time: %3lR'
-PROGRESS_WATCH_DEFAULT=0
-# If stdout is a TTY, enable progress watcher by default
-if [ -t 1 ]; then PROGRESS_WATCH_DEFAULT=1; fi
-PROGRESS_WATCH=${PROGRESS_WATCH:-$PROGRESS_WATCH_DEFAULT}
+# Progress watcher is fully opt-in now (no auto-enable on TTY)
+PROGRESS_WATCH=${PROGRESS_WATCH:-0}
 
 # Optional lightweight progress watcher: echoes lines like "[25/341] ..." as they appear
 WATCH_PID=""
