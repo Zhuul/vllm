@@ -54,6 +54,18 @@ else
 fi
 echo "Source dir for build: ${VLLM_SRC_DIR}"
 
+# Ensure a large, persistent temporary directory for heavy builds (pip/CMake use $TMPDIR)
+# Default to /opt/work/tmp unless user overrides via VLLM_TMPDIR/TMPDIR
+if [ -n "${VLLM_TMPDIR:-}" ]; then
+    export TMPDIR="$VLLM_TMPDIR"
+fi
+if [ -z "${TMPDIR:-}" ] || [[ "$TMPDIR" == "/tmp"* ]]; then
+    export TMPDIR="/opt/work/tmp"
+fi
+export TMP="$TMPDIR"; export TEMP="$TMPDIR"
+mkdir -p "$TMPDIR" 2>/dev/null || true
+echo "Using TMPDIR=$TMPDIR for build temps"
+
 # Install PyTorch with CUDA 12.9 for RTX 5090 support
 echo "🚀 Installing PyTorch nightly (CUDA 12.9 toolchain) ..."
 pip uninstall -y torch torchvision torchaudio 2>/dev/null || true
@@ -151,7 +163,9 @@ fi
 # Build environment tuning
 export VLLM_TARGET_DEVICE=cuda
 export SETUPTOOLS_SCM_PRETEND_VERSION="0.10.1.dev+cu129"
-export FETCHCONTENT_BASE_DIR=/tmp/vllm-build/deps
+# Place large build/dependency artifacts on /opt/work to avoid small /tmp tmpfs exhaustion
+export VLLM_BUILD_ROOT=${VLLM_BUILD_ROOT:-/opt/work}
+export FETCHCONTENT_BASE_DIR="$VLLM_BUILD_ROOT/vllm-build/deps"
 mkdir -p "$FETCHCONTENT_BASE_DIR"
 
 # ccache for faster rebuilds
@@ -215,6 +229,10 @@ echo "  FA3_MEMORY_SAFE_MODE: ${FA3_MEMORY_SAFE_MODE:-0}"
 # Build and install vLLM
 echo "🏗️  Building vLLM from source (no dependency resolution)..."
 cd "$VLLM_SRC_DIR"
+# Ensure pip/CMake use our larger build root for temp files
+export TMPDIR="$VLLM_BUILD_ROOT/tmp"
+export CMAKE_BUILD_PARALLEL_LEVEL=${CMAKE_BUILD_PARALLEL_LEVEL:-$MAX_JOBS}
+mkdir -p "$TMPDIR" 2>/dev/null || true
 LOG_DST="$VLLM_SRC_DIR/extras/build.log"
 mkdir -p "$(dirname "$LOG_DST")" 2>/dev/null || true
 set -o pipefail

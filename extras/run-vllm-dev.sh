@@ -110,7 +110,12 @@ if [[ $BUILD -ne 1 ]]; then
 fi
 
 # Base run args (env baked into image; minimal extras)
-RUN_ARGS=(run --rm --device=nvidia.com/gpu=all --security-opt=label=disable --shm-size 8g --tmpfs /tmp:size=8g --name "$CONTAINER_NAME" -v "${SOURCE_DIR}:/workspace:Z" -w /workspace --user vllmuser --env ENGINE=podman)
+RUN_ARGS=(run --rm --device=nvidia.com/gpu=all --security-opt=label=disable --shm-size 8g --name "$CONTAINER_NAME" -v "${SOURCE_DIR}:/workspace:Z" -w /workspace --user vllmuser --env ENGINE=podman)
+# Allow configurable /tmp tmpfs size (default 0=disabled to avoid small tmpfs). Set VLLM_TMPFS_TMP_SIZE to e.g. 64g to enable.
+TMPFS_SIZE="${VLLM_TMPFS_TMP_SIZE:-0}"
+if [[ -n "$TMPFS_SIZE" && "$TMPFS_SIZE" != "0" ]]; then
+  RUN_ARGS+=(--tmpfs "/tmp:size=${TMPFS_SIZE}")
+fi
 
 # Ensure sane NVIDIA env defaults inside container to avoid 'void' and missing caps
 RUN_ARGS+=(--env "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}" \

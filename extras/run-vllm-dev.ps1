@@ -10,10 +10,12 @@ param(
     [switch]$Interactive,
     [string]$Command = "",
     [switch]$Setup,
+    [switch]$NoGPUHook,
     [switch]$Progress,
     [switch]$GPUCheck,
     [switch]$Mirror,
     [switch]$Recreate,
+    [string]$WorkDirHost = "",
     [switch]$Help,
     [ValidateSet('podman')][string]$Engine = 'podman'
 )
@@ -62,7 +64,7 @@ if ($Recreate -and $running -eq $ContainerName) {
 if ($running -eq $ContainerName) {
     if ($GPUCheck) {
         Write-Host "🔍 GPU check (existing container)" -ForegroundColor Yellow
-        $cmd = @'
+    $cmd = @'
 source /home/vllmuser/venv/bin/activate && python - <<'PY'
 import torch, os
 print("PyTorch:", getattr(torch,"__version__","n/a"))
@@ -77,7 +79,9 @@ if torch.cuda.is_available():
 PY
 nvidia-smi || true
 '@
-        podman exec $ContainerName bash -c $cmd
+    # Force override env within the process to defeat 'void' from CDI hooks
+    $cmd = "export NVIDIA_VISIBLE_DEVICES=all; " + $cmd
+    podman exec $ContainerName bash -lc $cmd
         exit $LASTEXITCODE
     }
     if ($Setup) {
@@ -85,8 +89,9 @@ nvidia-smi || true
         $envs = @()
         if ($Mirror) { $envs += @('LOCAL_MIRROR=1') }
         if ($Progress) { $envs += @('PROGRESS_WATCH=1') }
-        $envStr = ($envs | ForEach-Object { "export $_;" }) -join ' '
-        $cmd = "$envStr chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh"
+    $envs += @('NVIDIA_VISIBLE_DEVICES=all')
+    $envStr = ($envs | ForEach-Object { "export $_;" }) -join ' '
+    $cmd = "$envStr chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh"
         if ($Progress) {
             podman exec -it $ContainerName bash -lc $cmd
         } else {
@@ -108,8 +113,23 @@ nvidia-smi || true
 podman image exists $ImageTag
 if ($LASTEXITCODE -ne 0) { Write-Host "❌ Image missing. Use -Build." -ForegroundColor Red; exit 1 }
 
-# Base args
-$runArgs = @("run","--rm","--security-opt=label=disable","--device=nvidia.com/gpu=all","--shm-size","8g","--tmpfs","/tmp:size=8g","-v","${SourceDir}:/workspace:Z","-w","/workspace","--name=$ContainerName","--user","vllmuser","--env","ENGINE=podman")
+# Base args (no default /tmp tmpfs; can be enabled via VLLM_TMPFS_TMP_SIZE)
+$runArgs = @("run","--rm","--security-opt=label=disable","--shm-size","8g","-v","${SourceDir}:/workspace:Z")
+if ($WorkDirHost -and (Test-Path $WorkDirHost)) {
+    $runArgs += @('-v',"${WorkDirHost}:/opt/work:Z")
+}
+$runArgs += @('-w','/workspace','--name',"$ContainerName",'--user','vllmuser','--env','ENGINE=podman')
+# Optional /tmp tmpfs to control build temp space; set VLLM_TMPFS_TMP_SIZE to e.g. '64g', or '0' to disable
+$tmpfsSize = [Environment]::GetEnvironmentVariable('VLLM_TMPFS_TMP_SIZE')
+if (-not [string]::IsNullOrEmpty($tmpfsSize) -and $tmpfsSize -ne '0') {
+    $runArgs += @('--tmpfs',"/tmp:size=$tmpfsSize")
+}
+if (-not $NoGPUHook) {
+    # Request GPU via CDI (Podman Desktop/NVIDIA hooks); on WSL this may still set NVIDIA_VISIBLE_DEVICES=void if not configured
+    $runArgs = @("run","--rm","--security-opt=label=disable","--device=nvidia.com/gpu=all") + $runArgs[2..($runArgs.Length-1)]
+}
+# WSL GPU: map /dev/dxg and mount WSL user-space libs to help PyTorch find libcuda
+$runArgs += @('--device','/dev/dxg','-v','/usr/lib/wsl:/usr/lib/wsl:ro')
 if ($Mirror) { $runArgs += @('--env','LOCAL_MIRROR=1') }
 foreach ($ev in 'NVIDIA_VISIBLE_DEVICES','NVIDIA_DRIVER_CAPABILITIES','NVIDIA_REQUIRE_CUDA') {
     $val = [Environment]::GetEnvironmentVariable($ev)
@@ -161,15 +181,22 @@ echo __PY_B64__ | base64 -d > /tmp/gpucheck.py
 python /tmp/gpucheck.py || true
 rm -f /tmp/gpucheck.py
 '@
+    # Last-chance override inside the process in case hooks set 'void'
+    $gpuScript = "export NVIDIA_VISIBLE_DEVICES=all; " + $gpuScript
     $gpuScript = $gpuScript -replace '__PY_B64__', $pyB64
     # Normalize line endings to avoid bash parsing issues
     $gpuScript = $gpuScript -replace "`r", ""
-    $runArgs += @($ImageTag,"bash","-lc",$gpuScript)
+    # Prepend WSL user-space libs and ensure visibility override
+    $gpuScript = "export NVIDIA_VISIBLE_DEVICES=all; export LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/lib/wsl/drivers:$LD_LIBRARY_PATH; " + $gpuScript
+    # Run as root to avoid /dev/dxg permission issues
+    $runArgs += @('--user','root', $ImageTag,"bash","-lc",$gpuScript)
 } elseif ($Setup) {
     $prefix = "chmod +x ./extras/dev-setup.sh 2>/dev/null || true; "
     $envPrefix = ''
     if ($Mirror) { $envPrefix += 'export LOCAL_MIRROR=1; ' }
     if ($Progress) { $envPrefix += 'export PROGRESS_WATCH=1; ' }
+    # Ensure large persistent temp dir rather than small /tmp tmpfs
+    $envPrefix += 'export TMPDIR=/opt/work/tmp; export TMP=/opt/work/tmp; export TEMP=/opt/work/tmp; mkdir -p /opt/work/tmp; '
     $setupCmd = $prefix + $envPrefix + "./extras/dev-setup.sh"
     if ($Progress) {
         $runArgs += @('-it', $ImageTag, 'bash','-lc', $setupCmd)

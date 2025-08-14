@@ -74,25 +74,7 @@ RUN pip install --upgrade pip setuptools>=61 wheel
 COPY requirements/ /tmp/requirements/
 
 # Install PyTorch nightly first (includes latest GPU arch support such as Blackwell sm_120 when present)
-RUN pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129 && \
-    python - << 'PY'
-from packaging.version import Version
-pins = []
-try:
-    import torch
-    pins.append(f"torch>={Version(torch.__version__).public}")
-except Exception: pass
-try:
-    import torchvision
-    pins.append(f"torchvision>={Version(torchvision.__version__).public}")
-except Exception: pass
-try:
-    import torchaudio
-    pins.append(f"torchaudio>={Version(torchaudio.__version__).public}")
-except Exception: pass
-open('/tmp/pip-constraints-torch-nightly.txt','w').write('\n'.join(pins))
-print('Pinned constraints:\n'+'\n'.join(pins))
-PY
+RUN pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129
 
 # Install modern build tools and vLLM's build dependencies and CUDA deps early,
 # but sanitize requirements to avoid downgrading torch-family or forcing xformers pins.
@@ -106,12 +88,12 @@ RUN set -euxo pipefail \
                      sed -E '/^(torch|torchvision|torchaudio|xformers)\b/Id' "/tmp/requirements/$f" > "/tmp/requirements_sanitized/$f"; \
                  fi; \
              done \
-    && pip install --pre -c /tmp/pip-constraints-torch-nightly.txt \
-          -r /tmp/requirements_sanitized/build.txt \
-          -r /tmp/requirements_sanitized/cuda.txt \
-          -r /tmp/requirements_sanitized/common.txt \
-    && pip install --pre --upgrade -c /tmp/pip-constraints-torch-nightly.txt \
-          torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129
+    && pip install --pre \
+        -r /tmp/requirements_sanitized/build.txt \
+        -r /tmp/requirements_sanitized/cuda.txt \
+        -r /tmp/requirements_sanitized/common.txt \
+    && pip install --pre --upgrade \
+        torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129
 
 # Install minimal development extras
 RUN pip install pytest pytest-asyncio ipython
