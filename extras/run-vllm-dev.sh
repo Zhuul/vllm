@@ -19,6 +19,7 @@ Options:
   -c, --command CMD  Run CMD inside container then exit
   -g, --gpu-check    Run lightweight GPU diagnostics inside container
   -s, --setup        Run ./extras/dev-setup.sh inside container
+  -p, --progress     Enable in-place progress display during setup
   -m, --mirror       Copy sources into container (LOCAL_MIRROR=1) for faster build on slow mounts
   -h, --help         Show this help and exit
   -n, --name NAME    Override container name (default: ${CONTAINER_NAME})
@@ -36,6 +37,7 @@ GPU_CHECK=0
 SETUP=0
 CMD=""
 MIRROR=0
+PROGRESS=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,7 +47,8 @@ while [[ $# -gt 0 ]]; do
   -s|--setup) SETUP=1; shift ;;
   -h|--help) show_help; exit 0 ;;
   -m|--mirror) MIRROR=1; shift ;;
-    -n|--name) CONTAINER_NAME="$2"; shift 2 ;;
+  -n|--name) CONTAINER_NAME="$2"; shift 2 ;;
+  -p|--progress) PROGRESS=1; shift ;;
     *) echo "Unknown option: $1" >&2; show_help; exit 1 ;;
   esac
 done
@@ -120,7 +123,10 @@ if [[ $GPU_CHECK -eq 1 ]]; then
 elif [[ $SETUP -eq 1 ]]; then
   if [[ $MIRROR -eq 1 ]]; then
     RUN_ARGS+=(--env LOCAL_MIRROR=1)
-    RUN_ARGS+=("$IMAGE_TAG" bash -lc 'chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh')
+  fi
+  if [[ $PROGRESS -eq 1 ]]; then
+    RUN_ARGS+=(--env PROGRESS_WATCH=1)
+    RUN_ARGS+=("-it" "$IMAGE_TAG" bash -lc 'chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh')
   else
     RUN_ARGS+=("$IMAGE_TAG" bash -lc 'chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh')
   fi

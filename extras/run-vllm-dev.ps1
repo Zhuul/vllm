@@ -10,6 +10,7 @@ param(
     [switch]$Interactive,
     [string]$Command = "",
     [switch]$Setup,
+    [switch]$Progress,
     [switch]$GPUCheck,
     [switch]$Mirror,
     [switch]$Recreate,
@@ -81,10 +82,15 @@ nvidia-smi || true
     }
     if ($Setup) {
         Write-Host "🔧 Running dev setup in existing container" -ForegroundColor Yellow
-        if ($Mirror) {
-            podman exec $ContainerName bash -lc 'export LOCAL_MIRROR=1; chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh'
+        $envs = @()
+        if ($Mirror) { $envs += @('LOCAL_MIRROR=1') }
+        if ($Progress) { $envs += @('PROGRESS_WATCH=1') }
+        $envStr = ($envs | ForEach-Object { "export $_;" }) -join ' '
+        $cmd = "$envStr chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh"
+        if ($Progress) {
+            podman exec -it $ContainerName bash -lc $cmd
         } else {
-            podman exec $ContainerName bash -lc 'chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh'
+            podman exec $ContainerName bash -lc $cmd
         }
         exit $LASTEXITCODE
     }
@@ -160,8 +166,16 @@ rm -f /tmp/gpucheck.py
     $gpuScript = $gpuScript -replace "`r", ""
     $runArgs += @($ImageTag,"bash","-lc",$gpuScript)
 } elseif ($Setup) {
-    $setupCmd = "chmod +x ./extras/dev-setup.sh 2>/dev/null || true; " + ($(if($Mirror){'export LOCAL_MIRROR=1; '}else{''})) + "./extras/dev-setup.sh"
-    $runArgs += @($ImageTag,"bash","-lc",$setupCmd)
+    $prefix = "chmod +x ./extras/dev-setup.sh 2>/dev/null || true; "
+    $envPrefix = ''
+    if ($Mirror) { $envPrefix += 'export LOCAL_MIRROR=1; ' }
+    if ($Progress) { $envPrefix += 'export PROGRESS_WATCH=1; ' }
+    $setupCmd = $prefix + $envPrefix + "./extras/dev-setup.sh"
+    if ($Progress) {
+        $runArgs += @('-it', $ImageTag, 'bash','-lc', $setupCmd)
+    } else {
+        $runArgs += @($ImageTag, 'bash','-lc', $setupCmd)
+    }
     Write-Host "🔧 Running dev setup" -ForegroundColor Green
 } elseif ($Interactive -and -not $Command) {
     $runArgs += @("-it",$ImageTag,"bash")

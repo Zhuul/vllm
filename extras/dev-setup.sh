@@ -219,7 +219,40 @@ LOG_DST="$VLLM_SRC_DIR/extras/build.log"
 mkdir -p "$(dirname "$LOG_DST")" 2>/dev/null || true
 set -o pipefail
 TIMEFORMAT='⏱  Build time: %3lR'
-time pip install --no-build-isolation --no-deps -e . -vv | tee "$LOG_DST"
+PROGRESS_WATCH_DEFAULT=0
+# If stdout is a TTY, enable progress watcher by default
+if [ -t 1 ]; then PROGRESS_WATCH_DEFAULT=1; fi
+PROGRESS_WATCH=${PROGRESS_WATCH:-$PROGRESS_WATCH_DEFAULT}
+
+# Optional lightweight progress watcher: echoes lines like "[25/341] ..." as they appear
+WATCH_PID=""
+if [ "$PROGRESS_WATCH" = "1" ]; then
+    echo "🪄 Progress watcher enabled (looking for [x/total] in build.log)"
+    (
+        # tail -F waits for file to appear; --pid ensures it exits with this script
+        tail --pid=$$ -n +1 -F "$LOG_DST" 2>/dev/null | \
+        awk 'match($0,/\[[0-9]+\/[0-9]+\]/){
+                     ts=strftime("%H:%M:%S");
+                     # print a compact, updating status line
+                     printf("\r[%s] %s", ts, substr($0, RSTART, RLENGTH));
+                     fflush(stdout);
+                 } END { print "" }'
+    ) &
+    WATCH_PID=$!
+fi
+
+# Prefer line-buffered output for better streaming through tee if stdbuf exists
+if command -v stdbuf >/dev/null 2>&1; then
+    time stdbuf -oL -eL pip install --no-build-isolation --no-deps -e . -vv | tee "$LOG_DST"
+else
+    time pip install --no-build-isolation --no-deps -e . -vv | tee "$LOG_DST"
+fi
+
+# Cleanup watcher so we leave the cursor nicely
+if [ -n "${WATCH_PID}" ]; then
+    kill "$WATCH_PID" 2>/dev/null || true
+    echo "" >&2
+fi
 echo "📄 Build log: $LOG_DST"
 
 if [ $? -eq 0 ]; then
