@@ -16,7 +16,7 @@ ENV CUDNN_INCLUDE_PATH=/usr/include
 RUN dnf update -y && dnf install --allowerasing -y \
     python3 python3-pip python3-devel \
     git gcc gcc-c++ cmake ninja-build \
-    make patch which findutils tar \
+    make patch which findutils tar rsync \
     wget curl vim nano \
     && dnf clean all
 
@@ -146,7 +146,7 @@ RUN echo '#!/bin/bash' > /home/vllmuser/setup_vllm_dev.sh && \
     echo '# Install current workspace requirements first' >> /home/vllmuser/setup_vllm_dev.sh && \
     echo 'if [ -f requirements/common.txt ]; then pip install -r requirements/common.txt; fi' >> /home/vllmuser/setup_vllm_dev.sh && \
     echo '# Use temporary directory for CMake build files' >> /home/vllmuser/setup_vllm_dev.sh && \
-    echo 'FETCHCONTENT_BASE_DIR="$TMPDIR/deps" pip install -e . --no-build-isolation --verbose' >> /home/vllmuser/setup_vllm_dev.sh && \
+    echo 'FETCHCONTENT_BASE_DIR="$TMPDIR/deps" pip install -e . --no-deps --no-build-isolation --verbose' >> /home/vllmuser/setup_vllm_dev.sh && \
     echo 'echo "✅ vLLM installed in editable mode!"' >> /home/vllmuser/setup_vllm_dev.sh && \
     echo 'python -c "import vllm; print(\"vLLM version:\", vllm.__version__)"' >> /home/vllmuser/setup_vllm_dev.sh && \
     chmod +x /home/vllmuser/setup_vllm_dev.sh

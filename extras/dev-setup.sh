@@ -30,6 +30,8 @@ if [ "${LOCAL_MIRROR:-0}" = "1" ]; then
         mkdir -p "$DEST"
     fi
     echo "   ➜ Mirror destination: $DEST"
+    # Ensure destination doesn't have a stray .git folder that could cause permission errors
+    rm -rf "$DEST/.git" 2>/dev/null || true
     # Use tar pipeline but avoid preserving ownership/permissions/timestamps to prevent utime errors on Windows mounts
     # Exclude .git to avoid permission issues and speed up copy
     if ! tar -C /workspace --exclude='.git' -cf - . | tar -C "$DEST" -xf - --no-same-owner --no-same-permissions 2>/dev/null; then
@@ -58,39 +60,32 @@ pip uninstall -y torch torchvision torchaudio 2>/dev/null || true
 pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129
 
 # Create a constraints file to prevent downgrades of any currently installed package.
-# Use format "name>=version" to allow upgrades but disallow downgrades.
+# Use format "name>=version" to allow upgrades but disallow downgrades. Avoid third-party deps.
 CONSTRAINTS_FILE="/tmp/pip-constraints-installed.txt"
 python - <<'PY'
-import sys
 try:
     from importlib.metadata import distributions
-except Exception:
+except Exception:  # py39 backport
     from importlib_metadata import distributions  # type: ignore
-from packaging.version import Version
 
-exclude = {pkg.lower() for pkg in [
+exclude = {pkg.lower() for pkg in (
     'pip', 'setuptools', 'wheel'
-]}
+)}
 lines = []
 for d in distributions():
-    name = d.metadata.get('Name') or ''
-    name = name.strip()
-    if not name:
+    name = (d.metadata.get('Name') or '').strip()
+    if not name or name.lower() in exclude:
         continue
-    lname = name.lower()
-    if lname in exclude:
+    ver = (d.version or '').strip()
+    if not ver:
         continue
-    ver = d.version
-    try:
-        pv = Version(ver).public  # strip any local suffix like +git...
-    except Exception:
-        pv = ver.split('+',1)[0]
-    norm = lname.replace('_','-')
-    if pv:
-        lines.append(f"{norm}>={pv}")
+    # Remove local version suffix (after '+') to keep constraint parser happy
+    pv = ver.split('+', 1)[0]
+    norm = name.lower().replace('_', '-')
+    lines.append(f"{norm}>={pv}")
 with open('/tmp/pip-constraints-installed.txt','w') as f:
     f.write('\n'.join(sorted(set(lines))))
-print('📌 Constraints (prevent downgrades):', len(lines))
+print('📌 Constraints written to /tmp/pip-constraints-installed.txt (count):', len(lines))
 PY
 export PIP_CONSTRAINT="$CONSTRAINTS_FILE"
 echo "Using PIP_CONSTRAINT=$PIP_CONSTRAINT"
@@ -199,8 +194,10 @@ fi
 
 # We no longer pass custom CMAKE_ARGS that refer to removed/unsupported options (e.g. ENABLE_MACHETE) to avoid noise.
 unset CMAKE_ARGS 2>/dev/null || true
-# Enable ccache via CMake compiler launchers (C/C++/CUDA)
-export CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache"
+# Enable ccache via CMake compiler launchers (C/C++/CUDA) and enable verbose messages
+export CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_RULE_MESSAGES=ON"
+export NINJA_STATUS="[%f/%t %o/sec] "
+export CMAKE_COLOR_DIAGNOSTICS=ON
 
 # By default we DO NOT disable FA3; user may export VLLM_DISABLE_FA3=1 before invoking this script to skip it.
 if [ -z "${VLLM_DISABLE_FA3:-}" ]; then
@@ -216,9 +213,14 @@ echo "  VLLM_DISABLE_FA3: $VLLM_DISABLE_FA3 (0=build FA3, 1=skip)"
 echo "  FA3_MEMORY_SAFE_MODE: ${FA3_MEMORY_SAFE_MODE:-0}"
 
 # Build and install vLLM
-echo "🏗️  Building vLLM from source..."
+echo "🏗️  Building vLLM from source (no dependency resolution)..."
 cd "$VLLM_SRC_DIR"
-pip install --no-build-isolation -e . -vv
+LOG_DST="$VLLM_SRC_DIR/extras/build.log"
+mkdir -p "$(dirname "$LOG_DST")" 2>/dev/null || true
+set -o pipefail
+TIMEFORMAT='⏱  Build time: %3lR'
+time pip install --no-build-isolation --no-deps -e . -vv | tee "$LOG_DST"
+echo "📄 Build log: $LOG_DST"
 
 if [ $? -eq 0 ]; then
     echo "✅ vLLM editable install completed successfully"
