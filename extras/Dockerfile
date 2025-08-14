@@ -15,7 +15,7 @@ ENV CUDNN_INCLUDE_PATH=/usr/include
 # Install system packages with additional CUDA development libraries
 RUN dnf update -y && dnf install --allowerasing -y \
     python3 python3-pip python3-devel \
-    git gcc gcc-c++ cmake ninja-build ccache \
+    git gcc gcc-c++ cmake ninja-build \
     make patch which findutils tar \
     wget curl vim nano \
     && dnf clean all

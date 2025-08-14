@@ -11,19 +11,23 @@ param(
     [string]$Command = "",
     [switch]$Setup,
     [switch]$GPUCheck,
+    [switch]$Mirror,
+    [switch]$Recreate,
     [switch]$Help,
     [ValidateSet('podman')][string]$Engine = 'podman'
 )
 
 if ($Help) {
-    Write-Host "Usage: run-vllm-dev.ps1 [-Build] [-Interactive] [-Command <cmd>] [-Setup] [-GPUCheck] [-Help]"
+    Write-Host "Usage: run-vllm-dev.ps1 [-Build] [-Interactive] [-Command <cmd>] [-Setup] [-GPUCheck] [-Mirror] [-Recreate] [-Help]"
     Write-Host ""
     Write-Host "Examples:" 
     Write-Host '  .\run-vllm-dev.ps1 -Build'
     # Use double quotes for python -c and single quotes inside for Python code; escaping via doubling single quotes in literal PS string
     Write-Host '  .\run-vllm-dev.ps1 -Command "python -c ''import torch;print(torch.cuda.is_available())''"'
     Write-Host '  .\run-vllm-dev.ps1 -GPUCheck'
-    Write-Host '  .\run-vllm-dev.ps1 -Setup    # runs ./extras/dev-setup.sh inside the container'
+    Write-Host '  .\run-vllm-dev.ps1 -Setup            # runs ./extras/dev-setup.sh inside the container'
+    Write-Host '  .\run-vllm-dev.ps1 -Setup -Mirror    # copy sources into container FS before building'
+    Write-Host '  .\run-vllm-dev.ps1 -Recreate -GPUCheck # remove stale container and run fresh GPU check'
     exit 0
 }
 
@@ -48,15 +52,22 @@ if ($Build) {
 # Already running?
 $running = podman ps --filter "name=$ContainerName" --format "{{.Names}}" 2>$null
 
+if ($Recreate -and $running -eq $ContainerName) {
+    Write-Host "♻️  Removing existing container '$ContainerName'" -ForegroundColor Yellow
+    podman rm -f $ContainerName | Out-Null
+    $running = $null
+}
+
 if ($running -eq $ContainerName) {
     if ($GPUCheck) {
         Write-Host "🔍 GPU check (existing container)" -ForegroundColor Yellow
         $cmd = @'
 source /home/vllmuser/venv/bin/activate && python - <<'PY'
-import torch
+import torch, os
 print("PyTorch:", getattr(torch,"__version__","n/a"))
 print("CUDA:", torch.cuda.is_available())
 print("Devices:", torch.cuda.device_count() if torch.cuda.is_available() else 0)
+print("LD_LIBRARY_PATH:", os.environ.get("LD_LIBRARY_PATH"))
 if torch.cuda.is_available():
     try:
         print("GPU 0:", torch.cuda.get_device_name(0))
@@ -65,12 +76,16 @@ if torch.cuda.is_available():
 PY
 nvidia-smi || true
 '@
-    podman exec $ContainerName bash -c $cmd
+        podman exec $ContainerName bash -c $cmd
         exit $LASTEXITCODE
     }
     if ($Setup) {
         Write-Host "🔧 Running dev setup in existing container" -ForegroundColor Yellow
-        podman exec $ContainerName bash -lc 'chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh'
+        if ($Mirror) {
+            podman exec $ContainerName bash -lc 'export LOCAL_MIRROR=1; chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh'
+        } else {
+            podman exec $ContainerName bash -lc 'chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh'
+        }
         exit $LASTEXITCODE
     }
     if ($Command) {
@@ -89,6 +104,7 @@ if ($LASTEXITCODE -ne 0) { Write-Host "❌ Image missing. Use -Build." -Foregrou
 
 # Base args
 $runArgs = @("run","--rm","--security-opt=label=disable","--device=nvidia.com/gpu=all","--shm-size","8g","--tmpfs","/tmp:size=8g","-v","${SourceDir}:/workspace:Z","-w","/workspace","--name=$ContainerName","--user","vllmuser","--env","ENGINE=podman")
+if ($Mirror) { $runArgs += @('--env','LOCAL_MIRROR=1') }
 foreach ($ev in 'NVIDIA_VISIBLE_DEVICES','NVIDIA_DRIVER_CAPABILITIES','NVIDIA_REQUIRE_CUDA') {
     $val = [Environment]::GetEnvironmentVariable($ev)
     if ($val) { $runArgs += @('--env',"$ev=$val") }
@@ -97,20 +113,23 @@ foreach ($ev in 'NVIDIA_VISIBLE_DEVICES','NVIDIA_DRIVER_CAPABILITIES','NVIDIA_RE
 $runArgs += @('--env','NVIDIA_VISIBLE_DEVICES=all','--env','NVIDIA_DRIVER_CAPABILITIES=compute,utility')
 
 if ($GPUCheck) {
-        $gpuScript = @"
+    $gpuScript = @"
 echo '=== GPU Check ==='
 which nvidia-smi && nvidia-smi || echo 'nvidia-smi unavailable'
 echo '--- /dev/nvidia* ---'
 ls -l /dev/nvidia* 2>/dev/null || echo 'no /dev/nvidia* nodes'
 echo '--- Environment (NVIDIA_*) ---'
 env | grep -E '^NVIDIA_' || echo 'no NVIDIA_* env vars'
+echo '--- LD_LIBRARY_PATH ---'
+echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
 source /home/vllmuser/venv/bin/activate 2>/dev/null || true
 python - <<'PY'
-import json,torch
+import json,torch,os
 out={
  'torch_version':getattr(torch,'__version__','n/a'),
  'torch_cuda_version':getattr(getattr(torch,'version',None),'cuda','n/a'),
- 'cuda_available':torch.cuda.is_available()
+ 'cuda_available':torch.cuda.is_available(),
+ 'ld_library_path':os.environ.get('LD_LIBRARY_PATH')
 }
 try: out['device_count']=torch.cuda.device_count()
 except Exception as e: out['device_count_error']=str(e)
@@ -125,9 +144,10 @@ else:
 print(json.dumps(out,indent=2))
 PY
 "@
-        $runArgs += @($ImageTag,"bash","-lc",$gpuScript)
+    $runArgs += @($ImageTag,"bash","-lc",$gpuScript)
 } elseif ($Setup) {
-    $runArgs += @($ImageTag,"bash","-lc","chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh")
+    $setupCmd = "chmod +x ./extras/dev-setup.sh 2>/dev/null || true; " + ($(if($Mirror){'export LOCAL_MIRROR=1; '}else{''})) + "./extras/dev-setup.sh"
+    $runArgs += @($ImageTag,"bash","-lc",$setupCmd)
     Write-Host "🔧 Running dev setup" -ForegroundColor Green
 } elseif ($Interactive -and -not $Command) {
     $runArgs += @("-it",$ImageTag,"bash")
