@@ -30,6 +30,14 @@ RUN useradd -m -s /bin/bash vllmuser && \
 # Install essential system tools
 RUN dnf install -y hostname iproute iputils
 
+# Add NVIDIA Machine Learning repo for RHEL9/UBI9 and install NCCL runtime/devel
+# Needed for PyTorch nightly cu129 to avoid ncclCommWindowRegister symbol errors
+# Install NCCL runtime/devel from the CUDA repository available in the base image
+RUN set -euxo pipefail \
+    && dnf makecache -y \
+    && (dnf install -y libnccl libnccl-devel || dnf install -y libnccl-2 libnccl-devel-2) \
+    && dnf clean all
+
 # Set working directory and adjust ownership
 WORKDIR /workspace
 RUN chown -R vllmuser:vllmuser /workspace
@@ -37,6 +45,7 @@ RUN chown -R vllmuser:vllmuser /workspace
 # Create build directories with proper permissions
 RUN mkdir -p /workspace/.deps && chown -R vllmuser:vllmuser /workspace/.deps && \
     mkdir -p /tmp/vllm-build && chmod 777 /tmp/vllm-build && \
+    mkdir -p /opt/work && chmod 777 /opt/work && \
     mkdir -p /home/vllmuser/.cache && chown -R vllmuser:vllmuser /home/vllmuser/.cache && \
     mkdir -p /home/vllmuser/.ccache && chown -R vllmuser:vllmuser /home/vllmuser/.ccache && \
     mkdir -p /home/vllmuser/.cmake && chown -R vllmuser:vllmuser /home/vllmuser/.cmake && \
@@ -65,12 +74,44 @@ RUN pip install --upgrade pip setuptools>=61 wheel
 COPY requirements/ /tmp/requirements/
 
 # Install PyTorch nightly first (includes latest GPU arch support such as Blackwell sm_120 when present)
-RUN pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129
+RUN pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129 && \
+    python - << 'PY'
+from packaging.version import Version
+pins = []
+try:
+    import torch
+    pins.append(f"torch>={Version(torch.__version__).public}")
+except Exception: pass
+try:
+    import torchvision
+    pins.append(f"torchvision>={Version(torchvision.__version__).public}")
+except Exception: pass
+try:
+    import torchaudio
+    pins.append(f"torchaudio>={Version(torchaudio.__version__).public}")
+except Exception: pass
+open('/tmp/pip-constraints-torch-nightly.txt','w').write('\n'.join(pins))
+print('Pinned constraints:\n'+'\n'.join(pins))
+PY
 
-# Install modern build tools and vLLM's build dependencies and CUDA deps early
+# Install modern build tools and vLLM's build dependencies and CUDA deps early,
+# but sanitize requirements to avoid downgrading torch-family or forcing xformers pins.
 COPY pyproject.toml /tmp/pyproject.toml
-RUN cd /tmp && pip install "setuptools>=61" "setuptools-scm>=8" build wheel ninja cmake \
-    && pip install -r /tmp/requirements/build.txt -r /tmp/requirements/cuda.txt -r /tmp/requirements/common.txt
+RUN set -euxo pipefail \
+        && cd /tmp \
+        && pip install "setuptools>=61" "setuptools-scm>=8" build wheel ninja cmake \
+        && mkdir -p /tmp/requirements_sanitized \
+        && for f in build.txt cuda.txt common.txt; do \
+                 if [ -f "/tmp/requirements/$f" ]; then \
+                     sed -E '/^(torch|torchvision|torchaudio|xformers)\b/Id' "/tmp/requirements/$f" > "/tmp/requirements_sanitized/$f"; \
+                 fi; \
+             done \
+    && pip install --pre -c /tmp/pip-constraints-torch-nightly.txt \
+          -r /tmp/requirements_sanitized/build.txt \
+          -r /tmp/requirements_sanitized/cuda.txt \
+          -r /tmp/requirements_sanitized/common.txt \
+    && pip install --pre --upgrade -c /tmp/pip-constraints-torch-nightly.txt \
+          torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129
 
 # Install minimal development extras
 RUN pip install pytest pytest-asyncio ipython
@@ -112,7 +153,8 @@ RUN echo '#!/bin/bash' > /home/vllmuser/setup_vllm_dev.sh && \
 
 # Add environment variables for better CUDA memory management and build optimization
 ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-ENV CUDA_VISIBLE_DEVICES=0
+# Do not pin a single GPU here; let runtime inject device selection
+# ENV CUDA_VISIBLE_DEVICES=0
 ENV CMAKE_BUILD_PARALLEL_LEVEL=4
 ENV VLLM_INSTALL_PUNICA_KERNELS=0
 ENV MAX_JOBS=4

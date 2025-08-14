@@ -80,7 +80,11 @@ if [[ "$RUNNING" == "$CONTAINER_NAME" ]]; then
   fi
   if [[ $SETUP -eq 1 ]]; then
     echo "[vLLM] Running dev setup in existing container"
-    exec $ENGINE exec "$CONTAINER_NAME" bash -lc 'chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh'
+    if [[ $MIRROR -eq 1 ]]; then
+      exec $ENGINE exec "$CONTAINER_NAME" bash -lc 'export LOCAL_MIRROR=1; chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh'
+    else
+      exec $ENGINE exec "$CONTAINER_NAME" bash -lc 'chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh'
+    fi
   fi
   if [[ -n "$CMD" ]]; then
     echo "[vLLM] Exec command in existing container"
@@ -103,14 +107,20 @@ if [[ $BUILD -ne 1 ]]; then
 fi
 
 # Base run args (env baked into image; minimal extras)
-RUN_ARGS=(run --rm --device=nvidia.com/gpu=all --security-opt=label=disable --shm-size 8g --tmpfs /tmp:size=8g --name "$CONTAINER_NAME" -v "${SOURCE_DIR}:/workspace:Z" -w /workspace --user vllmuser)
+RUN_ARGS=(run --rm --device=nvidia.com/gpu=all --security-opt=label=disable --shm-size 8g --tmpfs /tmp:size=8g --name "$CONTAINER_NAME" -v "${SOURCE_DIR}:/workspace:Z" -w /workspace --user vllmuser --env ENGINE=podman)
+
+# Ensure sane NVIDIA env defaults inside container to avoid 'void' and missing caps
+RUN_ARGS+=(--env "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}" \
+          --env "NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}" \
+          --env "NVIDIA_REQUIRE_CUDA=")
 
 if [[ $GPU_CHECK -eq 1 ]]; then
-  GPU_SCRIPT=$'echo "=== GPU Check ==="; which nvidia-smi && nvidia-smi || true; source /home/vllmuser/venv/bin/activate 2>/dev/null || true; python - <<PY\nimport torch, os\nprint("PyTorch:", getattr(torch, "__version__", "n/a"))\nprint("CUDA available:", torch.cuda.is_available())\nprint("Devices:", torch.cuda.device_count() if torch.cuda.is_available() else 0)\nif torch.cuda.is_available():\n    try: print("GPU 0:", torch.cuda.get_device_name(0))\n    except Exception as e: print("GPU name error:", e)\nPY'
+  GPU_SCRIPT=$'echo "=== GPU Check ==="; which nvidia-smi && nvidia-smi || echo "nvidia-smi unavailable"; echo "--- /dev/nvidia* ---"; ls -l /dev/nvidia* 2>/dev/null || echo "no /dev/nvidia* nodes"; echo "--- Environment (NVIDIA_*) ---"; env | grep -E "^NVIDIA_" || echo "no NVIDIA_* env vars"; if [ "$NVIDIA_VISIBLE_DEVICES" = "void" ]; then echo "WARN: NVIDIA_VISIBLE_DEVICES=void (no GPU mapped)"; fi; echo "--- LD_LIBRARY_PATH ---"; echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"; source /home/vllmuser/venv/bin/activate 2>/dev/null || true; python - <<PY\nimport json,torch,os\nout={\n \'torch_version\':getattr(torch,\'__version__\',\'n/a\'),\n \'torch_cuda_version\':getattr(getattr(torch,\'version\',None),\'cuda\',\'n/a\'),\n \'cuda_available\':torch.cuda.is_available(),\n \'ld_library_path\':os.environ.get(\'LD_LIBRARY_PATH\')\n}\ntry: out[\'device_count\']=torch.cuda.device_count()\nexcept Exception as e: out[\'device_count_error\']=str(e)\nif out[\'cuda_available\'] and out.get(\'device_count\',0)>0:\n    try:\n        cap=torch.cuda.get_device_capability(0)\n        out[\'device_0\']={\'name\':torch.cuda.get_device_name(0),\'capability\':f"sm_{cap[0]}{cap[1]}"}\n    except Exception as e:\n        out[\'device_0_error\']=str(e)\nelse:\n    out[\'diagnostics\']=[\'Missing /dev/nvidia* or podman machine without GPU passthrough\']\nprint(json.dumps(out,indent=2))\nPY'
   RUN_ARGS+=("$IMAGE_TAG" bash -lc "$GPU_SCRIPT")
 elif [[ $SETUP -eq 1 ]]; then
   if [[ $MIRROR -eq 1 ]]; then
-    RUN_ARGS+=("$IMAGE_TAG" bash -lc 'export LOCAL_MIRROR=1; chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh')
+    RUN_ARGS+=(--env LOCAL_MIRROR=1)
+    RUN_ARGS+=("$IMAGE_TAG" bash -lc 'chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh')
   else
     RUN_ARGS+=("$IMAGE_TAG" bash -lc 'chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh')
   fi

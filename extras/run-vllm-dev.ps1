@@ -110,40 +110,54 @@ foreach ($ev in 'NVIDIA_VISIBLE_DEVICES','NVIDIA_DRIVER_CAPABILITIES','NVIDIA_RE
     if ($val) { $runArgs += @('--env',"$ev=$val") }
 }
 # Force override to avoid 'void' value injected by failing hooks
-$runArgs += @('--env','NVIDIA_VISIBLE_DEVICES=all','--env','NVIDIA_DRIVER_CAPABILITIES=compute,utility')
+$runArgs += @('--env','ENGINE=podman', '--env','NVIDIA_VISIBLE_DEVICES=all','--env','NVIDIA_DRIVER_CAPABILITIES=compute,utility', '--env','NVIDIA_REQUIRE_CUDA=')
 
 if ($GPUCheck) {
-    $gpuScript = @"
+    # Inline Python diagnostics as base64 to avoid heredoc/CRLF issues on Windows
+    $pyDiag = @'
+import json, torch, os
+out = {
+    'torch_version': getattr(torch, '__version__', 'n/a'),
+    'torch_cuda_version': getattr(getattr(torch, 'version', None), 'cuda', 'n/a'),
+    'cuda_available': torch.cuda.is_available(),
+    'ld_library_path': os.environ.get('LD_LIBRARY_PATH'),
+}
+try:
+    out['device_count'] = torch.cuda.device_count()
+except Exception as e:
+    out['device_count_error'] = str(e)
+if out['cuda_available'] and out.get('device_count', 0) > 0:
+    try:
+        cap = torch.cuda.get_device_capability(0)
+        out['device_0'] = {
+            'name': torch.cuda.get_device_name(0),
+            'capability': f'sm_{cap[0]}{cap[1]}'
+        }
+    except Exception as e:
+        out['device_0_error'] = str(e)
+else:
+    out['diagnostics'] = ['Missing /dev/nvidia* or podman machine without GPU passthrough']
+print(json.dumps(out, indent=2))
+'@
+    $pyB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($pyDiag))
+    $gpuScript = @'
 echo '=== GPU Check ==='
 which nvidia-smi && nvidia-smi || echo 'nvidia-smi unavailable'
 echo '--- /dev/nvidia* ---'
 ls -l /dev/nvidia* 2>/dev/null || echo 'no /dev/nvidia* nodes'
 echo '--- Environment (NVIDIA_*) ---'
 env | grep -E '^NVIDIA_' || echo 'no NVIDIA_* env vars'
+if [ "$NVIDIA_VISIBLE_DEVICES" = "void" ]; then echo 'WARN: NVIDIA_VISIBLE_DEVICES=void (no GPU mapped)'; fi
 echo '--- LD_LIBRARY_PATH ---'
 echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
 source /home/vllmuser/venv/bin/activate 2>/dev/null || true
-python - <<'PY'
-import json,torch,os
-out={
- 'torch_version':getattr(torch,'__version__','n/a'),
- 'torch_cuda_version':getattr(getattr(torch,'version',None),'cuda','n/a'),
- 'cuda_available':torch.cuda.is_available(),
- 'ld_library_path':os.environ.get('LD_LIBRARY_PATH')
-}
-try: out['device_count']=torch.cuda.device_count()
-except Exception as e: out['device_count_error']=str(e)
-if out['cuda_available'] and out.get('device_count',0)>0:
-    try:
-        cap=torch.cuda.get_device_capability(0)
-        out['device_0']={'name':torch.cuda.get_device_name(0),'capability':f'sm_{cap[0]}{cap[1]}'}
-    except Exception as e:
-        out['device_0_error']=str(e)
-else:
-    out['diagnostics']=['Missing /dev/nvidia* or podman machine without GPU passthrough']
-print(json.dumps(out,indent=2))
-PY
-"@
+echo __PY_B64__ | base64 -d > /tmp/gpucheck.py
+python /tmp/gpucheck.py || true
+rm -f /tmp/gpucheck.py
+'@
+    $gpuScript = $gpuScript -replace '__PY_B64__', $pyB64
+    # Normalize line endings to avoid bash parsing issues
+    $gpuScript = $gpuScript -replace "`r", ""
     $runArgs += @($ImageTag,"bash","-lc",$gpuScript)
 } elseif ($Setup) {
     $setupCmd = "chmod +x ./extras/dev-setup.sh 2>/dev/null || true; " + ($(if($Mirror){'export LOCAL_MIRROR=1; '}else{''})) + "./extras/dev-setup.sh"

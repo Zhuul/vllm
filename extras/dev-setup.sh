@@ -1,5 +1,6 @@
 #!/bin/bash
 # dev-setup.sh - Set up vLLM development environment using nightly wheels
+set -euo pipefail
 
 echo "=== vLLM Development Environment Setup ==="
 echo "Container: $(hostname)"
@@ -21,11 +22,31 @@ echo ""
 
 ### Optional: build from a local mirror to avoid slow Windows/virtiofs mounts during heavy C++ builds
 if [ "${LOCAL_MIRROR:-0}" = "1" ]; then
-    echo "📁 LOCAL_MIRROR=1 -> Copying sources from /workspace to /opt/work for faster builds..."
-    mkdir -p /opt/work
-    # Use tar pipeline (faster and preserves permissions)
-    tar -C /workspace -cf - . | tar -C /opt/work -xpf -
-    export VLLM_SRC_DIR=/opt/work
+    echo "📁 LOCAL_MIRROR=1 -> Copying sources for faster builds..."
+    DEST="/opt/work"
+    if ! mkdir -p "$DEST" 2>/dev/null; then
+        echo "⚠️  No permission to create $DEST, falling back to /tmp/work"
+        DEST="/tmp/work"
+        mkdir -p "$DEST"
+    fi
+    echo "   ➜ Mirror destination: $DEST"
+    # Use tar pipeline but avoid preserving ownership/permissions/timestamps to prevent utime errors on Windows mounts
+    # Exclude .git to avoid permission issues and speed up copy
+    if ! tar -C /workspace --exclude='.git' -cf - . | tar -C "$DEST" -xf - --no-same-owner --no-same-permissions 2>/dev/null; then
+        echo "   ⚠️  tar copy failed (likely timestamp/perm issue). Falling back to rsync/cp ..."
+        shopt -s dotglob
+        if command -v rsync >/dev/null 2>&1; then
+            rsync -a --delete --exclude='.git' /workspace/ "$DEST"/ 2>/dev/null || true
+        else
+            for f in /workspace/*; do
+                bname="$(basename "$f")"
+                [ "$bname" = ".git" ] && continue
+                cp -R "$f" "$DEST"/ 2>/dev/null || true
+            done
+        fi
+        shopt -u dotglob
+    fi
+    export VLLM_SRC_DIR="$DEST"
 else
     export VLLM_SRC_DIR=/workspace
 fi
@@ -33,8 +54,46 @@ echo "Source dir for build: ${VLLM_SRC_DIR}"
 
 # Install PyTorch with CUDA 12.9 for RTX 5090 support
 echo "🚀 Installing PyTorch nightly (CUDA 12.9 toolchain) ..."
-pip uninstall torch torchvision torchaudio -y 2>/dev/null || true
+pip uninstall -y torch torchvision torchaudio 2>/dev/null || true
 pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129
+
+# Create a constraints file to prevent downgrades of any currently installed package.
+# Use format "name>=version" to allow upgrades but disallow downgrades.
+CONSTRAINTS_FILE="/tmp/pip-constraints-installed.txt"
+python - <<'PY'
+import sys
+try:
+    from importlib.metadata import distributions
+except Exception:
+    from importlib_metadata import distributions  # type: ignore
+from packaging.version import Version
+
+exclude = {pkg.lower() for pkg in [
+    'pip', 'setuptools', 'wheel'
+]}
+lines = []
+for d in distributions():
+    name = d.metadata.get('Name') or ''
+    name = name.strip()
+    if not name:
+        continue
+    lname = name.lower()
+    if lname in exclude:
+        continue
+    ver = d.version
+    try:
+        pv = Version(ver).public  # strip any local suffix like +git...
+    except Exception:
+        pv = ver.split('+',1)[0]
+    norm = lname.replace('_','-')
+    if pv:
+        lines.append(f"{norm}>={pv}")
+with open('/tmp/pip-constraints-installed.txt','w') as f:
+    f.write('\n'.join(sorted(set(lines))))
+print('📌 Constraints (prevent downgrades):', len(lines))
+PY
+export PIP_CONSTRAINT="$CONSTRAINTS_FILE"
+echo "Using PIP_CONSTRAINT=$PIP_CONSTRAINT"
 
 # Set CUDA architecture list; include latest (sm_120) so builds are forward-compatible if such GPU is present.
 echo "🔧 Configuring CUDA architectures (legacy + latest)..."
@@ -68,8 +127,31 @@ echo "📦 Preparing to install vLLM from source (editable)..."
 pip uninstall vllm -y 2>/dev/null || true
 
 # Preinstall pinned deps to avoid long resolver work (esp. numba/llvmlite)
-echo "📋 Installing pinned requirements (build + cuda + common)..."
-pip install -r requirements/build.txt -r requirements/cuda.txt -r requirements/common.txt
+echo "📋 Installing pinned requirements (build + cuda + common), sanitized to keep torch nightly..."
+mkdir -p /tmp/requirements_sanitized
+for f in build.txt cuda.txt common.txt; do
+    if [ -f "requirements/$f" ]; then
+        sed -E '/^(torch|torchvision|torchaudio|xformers)\b/Id' "requirements/$f" > "/tmp/requirements_sanitized/$f"
+    fi
+done
+pip install --pre \
+    -r /tmp/requirements_sanitized/build.txt \
+    -r /tmp/requirements_sanitized/cuda.txt \
+    -r /tmp/requirements_sanitized/common.txt
+
+# Reinstall PyTorch nightly to override any accidental downgrade from requirements
+echo "♻️  Ensuring PyTorch stays on nightly cu129 after requirements..."
+pip install --pre --upgrade \
+    torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/nightly/cu129
+
+# Optionally install xformers if requested; otherwise skip to avoid pin conflicts with torch nightlies.
+if [ "${WITH_XFORMERS:-0}" = "1" ]; then
+    echo "➕ Installing xformers (may override torch constraints)..."
+    pip install --pre xformers -f https://download.pytorch.org/whl/nightly/cu129/torch_nightly.html || true
+else
+    echo "⏭️  Skipping xformers (set WITH_XFORMERS=1 to include)"
+fi
 
 # Build environment tuning
 export VLLM_TARGET_DEVICE=cuda
@@ -84,7 +166,7 @@ export PATH=/usr/lib64/ccache:$PATH
 command -v ccache >/dev/null 2>&1 && ccache -s || true
 
 # Respect user-provided MAX_JOBS; otherwise derive a conservative default to avoid FA3 OOM (signal 9)
-if [ -z "${MAX_JOBS}" ]; then
+if [ -z "${MAX_JOBS:-}" ]; then
     # Derive from available cores but cap to 4 and adjust for memory pressure
     CORES=$(nproc 2>/dev/null || echo 4)
     # Read MemTotal (kB); if < 32GB, use 2; if < 16GB use 1
@@ -104,13 +186,13 @@ fi
 export MAX_JOBS
 
 # Allow an optional memory safe mode specifically for heavy FA3 compilation (can be toggled externally)
-if [ "${FA3_MEMORY_SAFE_MODE}" = "1" ]; then
+if [ "${FA3_MEMORY_SAFE_MODE:-0}" = "1" ]; then
     echo "⚠️  FA3_MEMORY_SAFE_MODE=1 -> Forcing MAX_JOBS=1 and NVCC_THREADS=1 to reduce peak RAM during compilation"
     export MAX_JOBS=1
     export NVCC_THREADS=1
 else
     # If user has not set NVCC_THREADS, keep it low (2) to reduce per-translation-unit memory usage
-    if [ -z "${NVCC_THREADS}" ]; then
+    if [ -z "${NVCC_THREADS:-}" ]; then
         export NVCC_THREADS=2
     fi
 fi
@@ -121,7 +203,7 @@ unset CMAKE_ARGS 2>/dev/null || true
 export CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache"
 
 # By default we DO NOT disable FA3; user may export VLLM_DISABLE_FA3=1 before invoking this script to skip it.
-if [ -z "${VLLM_DISABLE_FA3}" ]; then
+if [ -z "${VLLM_DISABLE_FA3:-}" ]; then
     export VLLM_DISABLE_FA3=0
 fi
 
