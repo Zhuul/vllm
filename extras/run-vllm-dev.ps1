@@ -1,128 +1,159 @@
 #!/usr/bin/env pwsh
 
-# Script to run vLLM development container with GPU support
-# Uses vLLM's own requirements for automatic dependency management
+# Unified lightweight dev container launcher for vLLM
+# - Auto-detects container engine (Podman preferred, fallback Docker)
+# - Minimal flags; environment baked into image
+# - Optional GPU diagnostics
 
 param(
     [switch]$Build,
     [switch]$Interactive,
     [string]$Command = "",
-    [switch]$Help
+    [switch]$GPUCheck,
+    [switch]$Help,
+    [ValidateSet('auto','docker','podman')][string]$Engine = 'auto'
 )
 
-# Default to interactive mode unless Command is specified
-if (!$Interactive -and [string]::IsNullOrEmpty($Command)) {
-    $Interactive = $true
+if ($Help) {
+    Write-Host "Usage: run-vllm-dev.ps1 [-Build] [-Interactive] [-Command <cmd>] [-GPUCheck] [-Engine auto|docker|podman] [-Help]"
+    Write-Host ""
+    Write-Host "Examples:" 
+    Write-Host '  .\run-vllm-dev.ps1 -Build'
+    # Use double quotes for python -c and single quotes inside for Python code; escaping via doubling single quotes in literal PS string
+    Write-Host '  .\run-vllm-dev.ps1 -Command "python -c ''import torch;print(torch.cuda.is_available())''"'
+    Write-Host '  .\run-vllm-dev.ps1 -GPUCheck'
+    Write-Host '  .\run-vllm-dev.ps1 -GPUCheck -Engine podman'
+    exit 0
 }
 
-if ($Help) {
-    Write-Host "Usage: run-vllm-dev.ps1 [-Build] [-Interactive] [-Command <cmd>] [-Help]"
-    Write-Host ""
-    Write-Host "Options:"
-    Write-Host "  -Build        Build the container before running"
-    Write-Host "  -Interactive  Run in interactive mode (default)"
-    Write-Host "  -Command      Run specific command instead of interactive shell"
-    Write-Host "  -Help         Show this help message"
-    Write-Host ""
-    Write-Host "Examples:"
-    Write-Host "  .\run-vllm-dev.ps1 -Build                    # Build and run container"
-    Write-Host "  .\run-vllm-dev.ps1                           # Run container interactively"
-    Write-Host "  .\run-vllm-dev.ps1 -Command 'nvidia-smi'     # Run nvidia-smi"
-    Write-Host ""
-    Write-Host "Manual container access:"
-    Write-Host "  podman exec -it vllm-dev bash               # Connect to running container"
-    Write-Host "  podman run --rm -it --device=nvidia.com/gpu=all --name=vllm-dev -v `"`${PWD}:/workspace:Z`" vllm-dev:latest"
-    exit 0
+if (-not $Interactive -and [string]::IsNullOrEmpty($Command) -and -not $GPUCheck) { $Interactive = $true }
+
+# Detect / resolve engine
+if ($Engine -eq 'auto') {
+    if (Get-Command podman -ErrorAction SilentlyContinue) { $Engine = "podman" }
+    elseif (Get-Command docker -ErrorAction SilentlyContinue) { $Engine = "docker" }
+    else { Write-Host "❌ Neither podman nor docker found" -ForegroundColor Red; exit 1 }
+} else {
+    if (-not (Get-Command $Engine -ErrorAction SilentlyContinue)) { Write-Host "❌ Requested engine '$Engine' not found" -ForegroundColor Red; exit 1 }
 }
 
 $ContainerName = "vllm-dev"
 $ImageTag = "vllm-dev:latest"
 $SourceDir = $PWD
 
-Write-Host "🐋 vLLM Development Container" -ForegroundColor Green
-Write-Host "Source directory: $SourceDir"
+Write-Host "🐋 vLLM Dev Container (engine: $Engine)" -ForegroundColor Green
 
 if ($Build) {
-    Write-Host "🔨 Building container..." -ForegroundColor Yellow
-    podman build -f extras/Dockerfile -t $ImageTag .
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "❌ Build failed!" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "✅ Build completed successfully!" -ForegroundColor Green
+    Write-Host "🔨 Building image..." -ForegroundColor Yellow
+    $buildCmd = @("build","-f","extras/Dockerfile","-t",$ImageTag,".")
+    if ($Engine -eq "docker") { & docker @buildCmd } else { & podman @buildCmd }
+    if ($LASTEXITCODE -ne 0) { Write-Host "❌ Build failed" -ForegroundColor Red; exit 1 }
+    Write-Host "✅ Build ok" -ForegroundColor Green
 }
 
-# Check if container is already running
-$runningContainer = podman ps --filter "name=$ContainerName" --format "{{.Names}}" 2>$null
-if ($runningContainer -eq $ContainerName) {
-    Write-Host "ℹ️  Container '$ContainerName' is already running" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "To connect to the running container:" -ForegroundColor Yellow
-    Write-Host "  podman exec -it $ContainerName bash" -ForegroundColor White
-    Write-Host ""
-    Write-Host "To stop the running container:" -ForegroundColor Yellow
-    Write-Host "  podman stop $ContainerName" -ForegroundColor White
-    Write-Host ""
-    
-    if (![string]::IsNullOrEmpty($Command)) {
-        Write-Host "🚀 Running command in existing container: $Command" -ForegroundColor Green
-        & podman exec $ContainerName bash -c "source /home/vllmuser/venv/bin/activate && $Command"
-        exit $LASTEXITCODE
-    } else {
-        $response = Read-Host "Connect to running container? [Y/n]"
-        if ($response -eq "" -or $response -eq "Y" -or $response -eq "y") {
-            & podman exec -it $ContainerName bash
-            exit $LASTEXITCODE
-        } else {
-            Write-Host "Container remains running. Use the commands above to interact with it." -ForegroundColor Gray
-            exit 0
-        }
-    }
-}
-
-# Check if image exists
-podman image exists $ImageTag
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Image $ImageTag not found. Run with -Build to create it." -ForegroundColor Red
-    exit 1
-}
-
-# Container run arguments
-$RunArgs = @(
-    "run", "--rm"
-    "--device=nvidia.com/gpu=all"
-    "--name=$ContainerName"
-    "-v", "${SourceDir}:/workspace:Z"
-    "-w", "/workspace"
-    "--user", "vllmuser"
-    "-e", "NVIDIA_VISIBLE_DEVICES=all"
-    "-e", "CUDA_VISIBLE_DEVICES=0"
-)
-
-if ($Interactive -and [string]::IsNullOrEmpty($Command)) {
-    $RunArgs += @("-it", $ImageTag, "bash")
-    Write-Host "🚀 Starting interactive container..." -ForegroundColor Green
-    Write-Host ""
-    Write-Host "Once started, you'll be inside the container. Useful commands:" -ForegroundColor Cyan
-    Write-Host "  python /workspace/extras/final_environment_test.py    # Test environment" -ForegroundColor White
-    Write-Host "  ./extras/dev-setup.sh                               # Setup vLLM for development" -ForegroundColor White
-    Write-Host "  python -c 'import torch; print(torch.__version__)'   # Check PyTorch version" -ForegroundColor White
-    Write-Host ""
-} elseif (![string]::IsNullOrEmpty($Command)) {
-    $RunArgs += @($ImageTag, "bash", "-c", "source /home/vllmuser/venv/bin/activate && $Command")
-    Write-Host "🚀 Running command: $Command" -ForegroundColor Green
+# Already running?
+if ($Engine -eq "docker") {
+    $running = docker ps --filter "name=$ContainerName" --format "{{.Names}}" 2>$null
 } else {
-    $RunArgs += @($ImageTag)
-    Write-Host "🚀 Starting container..." -ForegroundColor Green
+    $running = podman ps --filter "name=$ContainerName" --format "{{.Names}}" 2>$null
 }
 
-# Run the container
-Write-Host "Running: podman $($RunArgs -join ' ')"
-& podman @RunArgs
+if ($running -eq $ContainerName) {
+    if ($GPUCheck) {
+        Write-Host "🔍 GPU check (existing container)" -ForegroundColor Yellow
+        $cmd = @'
+source /home/vllmuser/venv/bin/activate && python - <<'PY'
+import torch
+print("PyTorch:", getattr(torch,"__version__","n/a"))
+print("CUDA:", torch.cuda.is_available())
+print("Devices:", torch.cuda.device_count() if torch.cuda.is_available() else 0)
+if torch.cuda.is_available():
+    try:
+        print("GPU 0:", torch.cuda.get_device_name(0))
+    except Exception as e:
+        print("GPU name error:", e)
+PY
+nvidia-smi || true
+'@
+        if ($Engine -eq "docker") { docker exec $ContainerName bash -c $cmd } else { podman exec $ContainerName bash -c $cmd }
+        exit $LASTEXITCODE
+    }
+    if ($Command) {
+        Write-Host "🚀 Running command in existing container" -ForegroundColor Green
+        $runCmd = "source /home/vllmuser/venv/bin/activate && $Command"
+        if ($Engine -eq "docker") { docker exec $ContainerName bash -c $runCmd } else { podman exec $ContainerName bash -c $runCmd }
+        exit $LASTEXITCODE
+    }
+    $resp = Read-Host "Attach to running container? [Y/n]"
+    if ($resp -eq "" -or $resp -match '^[Yy]$') { if ($Engine -eq "docker") { docker exec -it $ContainerName bash } else { podman exec -it $ContainerName bash }; exit $LASTEXITCODE } else { exit 0 }
+}
 
-# Show connection info after container exits
+# Ensure image exists
+if ($Engine -eq "docker") {
+    $img = docker images --format "{{.Repository}}:{{.Tag}}" | Select-String "^$ImageTag$"
+    if (-not $img) { Write-Host "❌ Image missing. Use -Build." -ForegroundColor Red; exit 1 }
+} else {
+    podman image exists $ImageTag
+    if ($LASTEXITCODE -ne 0) { Write-Host "❌ Image missing. Use -Build." -ForegroundColor Red; exit 1 }
+}
+
+# Base args
+if ($Engine -eq "docker") {
+    $runArgs = @("run","--rm","--name=$ContainerName","--gpus","all","-v","${SourceDir}:/workspace","-w","/workspace","--user","vllmuser")
+} else {
+    $runArgs = @("run","--rm","--security-opt=label=disable","--device=nvidia.com/gpu=all","-v","${SourceDir}:/workspace:Z","-w","/workspace","--name=$ContainerName","--user","vllmuser","--env","ENGINE=podman")
+    foreach ($ev in 'NVIDIA_VISIBLE_DEVICES','NVIDIA_DRIVER_CAPABILITIES','NVIDIA_REQUIRE_CUDA') {
+        $val = [Environment]::GetEnvironmentVariable($ev)
+        if ($val) { $runArgs += @('--env',"$ev=$val") }
+    }
+    # Force override to avoid 'void' value injected by failing hooks
+    $runArgs += @('--env','NVIDIA_VISIBLE_DEVICES=all','--env','NVIDIA_DRIVER_CAPABILITIES=compute,utility')
+}
+
+echo '=== GPU Check ==='
+if ($GPUCheck) {
+        $gpuScript = @"
+echo '=== GPU Check ==='
+which nvidia-smi && nvidia-smi || echo 'nvidia-smi unavailable'
+echo '--- /dev/nvidia* ---'
+ls -l /dev/nvidia* 2>/dev/null || echo 'no /dev/nvidia* nodes'
+echo '--- Environment (NVIDIA_*) ---'
+env | grep -E '^NVIDIA_' || echo 'no NVIDIA_* env vars'
+source /home/vllmuser/venv/bin/activate 2>/dev/null || true
+python - <<'PY'
+import json,torch
+out={
+ 'torch_version':getattr(torch,'__version__','n/a'),
+ 'torch_cuda_version':getattr(getattr(torch,'version',None),'cuda','n/a'),
+ 'cuda_available':torch.cuda.is_available()
+}
+try: out['device_count']=torch.cuda.device_count()
+except Exception as e: out['device_count_error']=str(e)
+if out['cuda_available'] and out.get('device_count',0)>0:
+    try:
+        cap=torch.cuda.get_device_capability(0)
+        out['device_0']={'name':torch.cuda.get_device_name(0),'capability':f'sm_{cap[0]}{cap[1]}'}
+    except Exception as e:
+        out['device_0_error']=str(e)
+else:
+    out['diagnostics']=['Missing /dev/nvidia* or podman machine without GPU passthrough']
+print(json.dumps(out,indent=2))
+PY
+"@
+        $runArgs += @($ImageTag,"bash","-c",$gpuScript)
+} elseif ($Interactive -and -not $Command) {
+    $runArgs += @("-it",$ImageTag,"bash")
+    Write-Host "🚀 Interactive shell" -ForegroundColor Green
+} elseif ($Command) {
+    $runArgs += @($ImageTag,"bash","-c","source /home/vllmuser/venv/bin/activate && $Command")
+    Write-Host "🚀 Running command" -ForegroundColor Green
+} else {
+    $runArgs += @($ImageTag)
+}
+
+Write-Host "Command: $Engine $($runArgs -join ' ')" -ForegroundColor Gray
+if ($Engine -eq "docker") { & docker @runArgs } else { & podman @runArgs }
+
 if ($LASTEXITCODE -eq 0 -and $Interactive) {
-    Write-Host ""
-    Write-Host "Container exited successfully." -ForegroundColor Green
-    Write-Host "To reconnect, run: .\extras\run-vllm-dev.ps1" -ForegroundColor Cyan
+    Write-Host "Exited cleanly" -ForegroundColor Green
 }

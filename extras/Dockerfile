@@ -61,8 +61,7 @@ RUN pip install --upgrade pip setuptools>=61 wheel
 # Copy vLLM requirements to leverage the project's own dependency management
 COPY requirements/ /tmp/requirements/
 
-# Install PyTorch nightly with RTX 5090 (sm_120) support instead of stable version
-# This provides better GPU compatibility for the latest architectures
+# Install PyTorch nightly (includes latest GPU arch support such as Blackwell sm_120 when present)
 RUN pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129
 
 # Install modern build tools and vLLM's build dependencies
@@ -121,12 +120,11 @@ ENV CMAKE_BUILD_PARALLEL_LEVEL=4
 ENV VLLM_INSTALL_PUNICA_KERNELS=0
 ENV MAX_JOBS=4
 
-# RTX 5090 (sm_120) support - critical for latest GPUs.
-# NOTE: Keep a single definitive TORCH_CUDA_ARCH_LIST including legacy + sm_120.
-# Avoid redefining later (previous duplicate removed) so sm_120 isn't lost.
-ENV TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0;12.0"
-# Default disable Machete so build can proceed on non-Hopper targets; can be re-enabled via runtime -e CMAKE_ARGS or build arg.
-ENV CMAKE_ARGS="-DENABLE_MACHETE=OFF"
+# CUDA arch list including legacy + latest (sm_120) so builds cover both older and newest GPUs.
+# Using space-separated style (matches upstream main Dockerfile) for consistency.
+ENV TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0 12.0"
+# Do not force-disable Machete; allow upstream defaults. User may still pass -e CMAKE_ARGS for custom CMake settings.
+ENV CMAKE_ARGS=""
 
 # WSL2-specific CUDA environment configuration
 ENV NVIDIA_VISIBLE_DEVICES=all

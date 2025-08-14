@@ -3,23 +3,20 @@
 ## 🎯 Current Status: WORKING ✅
 
 Your vLLM development environment is successfully configured with:
-- ✅ **Container**: `vllm-dev:latest` with NVIDIA CUDA 12.9.1
+- ✅ **Container**: `vllm-dev-fixed:v2` with NVIDIA CUDA 12.9.1
 - ✅ **GPU Access**: RTX 5090 (31GB) via CDI (`nvidia.com/gpu=all`)
-- ✅ **PyTorch**: Latest compatible version from vLLM requirements
+- ✅ **PyTorch**: 2.7.1 with CUDA support
 - ✅ **vLLM**: Development version ready for use
 
 ## 🚀 Quick Start Commands
 
 ### Start Development Container
 ```powershell
-# From the vLLM repository root
-cd c:\sources\github\vllm
-
-# Build container (first time only)
-.\extras\run-vllm-dev.ps1 -Build
-
-# Run interactive container
-.\extras\run-vllm-dev.ps1
+# Start interactive development session
+podman run --rm -it --device=nvidia.com/gpu=all `
+  -v "${PWD}:/workspace" `
+  --name=vllm-dev `
+  vllm-dev-fixed:v2
 
 # Inside container - activate environment
 source /home/vllmuser/venv/bin/activate
@@ -30,8 +27,8 @@ source /home/vllmuser/venv/bin/activate
 # Quick GPU test
 python -c "import torch; print('CUDA:', torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 
-# Comprehensive environment test
-python /workspace/extras/final_environment_test.py
+# Test vLLM (basic import)
+python -c "import vllm; print('vLLM version:', vllm.__version__)"
 ```
 
 ### Run vLLM Server
@@ -98,7 +95,7 @@ sys.path.remove('/workspace')  # Test installed version
 ### Build New Version (if needed)
 ```powershell
 # Rebuild container with updates
-.\extras\run-vllm-dev.ps1 -Build
+podman build -f extras/Dockerfile.fixed -t vllm-dev-fixed:v3 .
 ```
 
 ### Clean Up
@@ -128,12 +125,12 @@ podman image prune
 
 | Component | Status | Notes |
 |-----------|--------|--------|
-| Container | ✅ Working | `vllm-dev:latest` |
+| Container | ✅ Working | `vllm-dev-fixed:v2` |
 | GPU Access | ✅ Working | RTX 5090 via CDI |
 | CUDA | ✅ Working | Version 12.9.1 |
-| PyTorch | ✅ Working | Latest compatible |
-| vLLM | ✅ Working | Using project requirements |
-| Auto-update | ✅ Ready | Uses `:latest` tag and vLLM requirements |
+| PyTorch | ✅ Working | 2.7.1+cu126 |
+| vLLM | ✅ Working | Dev version |
+| Networking | ✅ Working | Port mapping available |
 
 **🎉 Congratulations! Your vLLM development environment is ready for AI inference and development!**
 5. **Container-Only Solution**: This is a pure container approach - no Windows/PowerShell dependencies

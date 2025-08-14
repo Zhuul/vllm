@@ -20,14 +20,14 @@ python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA av
 echo ""
 
 # Install PyTorch with CUDA 12.9 for RTX 5090 support
-echo "🚀 Installing PyTorch nightly with CUDA 12.9 for RTX 5090..."
+echo "🚀 Installing PyTorch nightly (CUDA 12.9 toolchain) ..."
 pip uninstall torch torchvision torchaudio -y 2>/dev/null || true
 pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129
 
-# Set CUDA architecture list to include RTX 5090 (sm_120)
-echo "🔧 Configuring CUDA architectures for RTX 5090..."
-export TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0;12.0"
-echo "TORCH_CUDA_ARCH_LIST set to: $TORCH_CUDA_ARCH_LIST"
+# Set CUDA architecture list; include latest (sm_120) so builds are forward-compatible if such GPU is present.
+echo "🔧 Configuring CUDA architectures (legacy + latest)..."
+export TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0 12.0"
+echo "TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST"
 
 # Verify PyTorch version and CUDA capabilities
 echo "🔍 Verifying PyTorch installation..."
@@ -53,7 +53,7 @@ if torch.cuda.is_available():
 echo ""
 
 # Install vLLM from source (required for RTX 5090 sm_120 support)
-echo "📦 Installing vLLM from source for RTX 5090 compatibility..."
+echo "📦 Installing vLLM from source (editable)..."
 pip uninstall vllm -y 2>/dev/null || true
 
 # Use existing PyTorch installation approach
@@ -64,31 +64,66 @@ python use_existing_torch.py
 echo "📋 Installing build requirements (may include machete deps only if enabled)..."
 pip install -r requirements/build.txt
 
-# Set build environment for RTX 5090
-export MAX_JOBS=4
+# Build environment tuning
 export VLLM_TARGET_DEVICE=cuda
 export SETUPTOOLS_SCM_PRETEND_VERSION="0.10.1.dev+cu129"
 export FETCHCONTENT_BASE_DIR=/tmp/vllm-build/deps
-if [ -z "${ENABLE_MACHETE}" ]; then
-    # Caller can set ENABLE_MACHETE=ON to force building; default OFF for experimental GPUs
-    ENABLE_MACHETE=OFF
+mkdir -p "$FETCHCONTENT_BASE_DIR"
+
+# Respect user-provided MAX_JOBS; otherwise derive a conservative default to avoid FA3 OOM (signal 9)
+if [ -z "${MAX_JOBS}" ]; then
+    # Derive from available cores but cap to 4 and adjust for memory pressure
+    CORES=$(nproc 2>/dev/null || echo 4)
+    # Read MemTotal (kB); if < 32GB, use 2; if < 16GB use 1
+    MEM_KB=$(grep -i MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}')
+    if [ -n "$MEM_KB" ]; then
+        if [ "$MEM_KB" -lt 16000000 ]; then
+            MAX_JOBS=1
+        elif [ "$MEM_KB" -lt 32000000 ]; then
+            MAX_JOBS=2
+        else
+            MAX_JOBS=$(( CORES < 4 ? CORES : 4 ))
+        fi
+    else
+        MAX_JOBS=$(( CORES < 4 ? CORES : 4 ))
+    fi
 fi
-export CMAKE_ARGS="-DENABLE_MACHETE=${ENABLE_MACHETE}"
-export VLLM_INSTALL_PUNICA_KERNELS=0
-mkdir -p $FETCHCONTENT_BASE_DIR
+export MAX_JOBS
+
+# Allow an optional memory safe mode specifically for heavy FA3 compilation (can be toggled externally)
+if [ "${FA3_MEMORY_SAFE_MODE}" = "1" ]; then
+    echo "⚠️  FA3_MEMORY_SAFE_MODE=1 -> Forcing MAX_JOBS=1 and NVCC_THREADS=1 to reduce peak RAM during compilation"
+    export MAX_JOBS=1
+    export NVCC_THREADS=1
+else
+    # If user has not set NVCC_THREADS, keep it low (2) to reduce per-translation-unit memory usage
+    if [ -z "${NVCC_THREADS}" ]; then
+        export NVCC_THREADS=2
+    fi
+fi
+
+# We no longer pass custom CMAKE_ARGS that refer to removed/unsupported options (e.g. ENABLE_MACHETE) to avoid noise.
+unset CMAKE_ARGS 2>/dev/null || true
+
+# By default we DO NOT disable FA3; user may export VLLM_DISABLE_FA3=1 before invoking this script to skip it.
+if [ -z "${VLLM_DISABLE_FA3}" ]; then
+    export VLLM_DISABLE_FA3=0
+fi
 
 echo "🔧 Build environment configured:"
 echo "  TORCH_CUDA_ARCH_LIST: $TORCH_CUDA_ARCH_LIST"
 echo "  MAX_JOBS: $MAX_JOBS"
-echo "  CMAKE_ARGS: $CMAKE_ARGS (ENABLE_MACHETE=${ENABLE_MACHETE})"
+echo "  NVCC_THREADS: ${NVCC_THREADS:-unset}"
 echo "  FETCHCONTENT_BASE_DIR: $FETCHCONTENT_BASE_DIR"
+echo "  VLLM_DISABLE_FA3: $VLLM_DISABLE_FA3 (0=build FA3, 1=skip)"
+echo "  FA3_MEMORY_SAFE_MODE: ${FA3_MEMORY_SAFE_MODE:-0}"
 
 # Build and install vLLM
 echo "🏗️  Building vLLM from source..."
 pip install --no-build-isolation -e .
 
 if [ $? -eq 0 ]; then
-    echo "✅ vLLM nightly wheel installed successfully"
+    echo "✅ vLLM editable install completed successfully"
 else
     echo "❌ Failed to install vLLM"
     exit 1
