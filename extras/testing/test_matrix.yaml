@@ -1,0 +1,16 @@
+models:
+  - name: Example-Llama3-8B
+    id: meta-llama/Llama-3-8B
+    chat_template: chat_templates/llama-3-instruct.jinja
+    params:
+      max_tokens: 64
+      temperature: 0.7
+
+environments:
+  - cuda: 12.9.1
+    ubi: 9.4
+
+benchmarks:
+  - name: inference_speed
+    input: "Summarize: vLLM extras modularization plan."
+    metrics: [latency_ms, tokens_per_sec]

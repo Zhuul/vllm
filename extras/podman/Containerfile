@@ -1,0 +1,11 @@
+# syntax=docker/dockerfile:1.7-labs
+
+# Delegator Containerfile.
+# Build using the canonical Dockerfile in extras/ to avoid duplication.
+
+FROM scratch as noop
+
+# Usage:
+#   podman build -f extras/Dockerfile -t vllm-dev:latest .
+# or from this folder (wrapper script does this for you):
+#   bash build.sh

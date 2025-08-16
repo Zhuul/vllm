@@ -31,6 +31,8 @@ See <gh-file:LICENSE>.
 Depending on the kind of development you'd like to do (e.g. Python, CUDA), you can choose to build vLLM with or without compilation.
 Check out the [building from source][build-from-source] documentation for details.
 
+For a containerized developer workflow, see Podman-first dev: `docs/contributing/podman-dev.md`.
+
 For an optimized workflow when iterating on C++/CUDA kernels, see the [Incremental Compilation Workflow](./incremental_build.md) for recommendations.
 
 ### Building the docs with MkDocs

@@ -1,0 +1,11 @@
+cuda:
+  version: "12.9.1"
+  tag: "latest"
+ubi:
+  version: "9.4"
+  tag: "latest"
+python:
+  version: "3.11"
+  tag: "latest"
+vllm:
+  tag: main
