@@ -15,13 +15,14 @@ param(
     [switch]$GPUCheck,
     [switch]$Mirror,
     [switch]$Recreate,
+    [string]$WorkVolume = "",
     [string]$WorkDirHost = "",
     [switch]$Help,
     [ValidateSet('podman')][string]$Engine = 'podman'
 )
 
 if ($Help) {
-    Write-Host "Usage: run-vllm-dev.ps1 [-Build] [-Interactive] [-Command <cmd>] [-Setup] [-GPUCheck] [-Mirror] [-Recreate] [-Help]"
+    Write-Host "Usage: run-vllm-dev.ps1 [-Build] [-Interactive] [-Command <cmd>] [-Setup] [-GPUCheck] [-Mirror] [-Recreate] [-WorkVolume <name>] [-WorkDirHost <path>] [-Help]"
     Write-Host ""
     Write-Host "Examples:" 
     Write-Host '  .\run-vllm-dev.ps1 -Build'
@@ -30,6 +31,7 @@ if ($Help) {
     Write-Host '  .\run-vllm-dev.ps1 -GPUCheck'
     Write-Host '  .\run-vllm-dev.ps1 -Setup            # runs ./extras/dev-setup.sh inside the container'
     Write-Host '  .\run-vllm-dev.ps1 -Setup -Mirror    # copy sources into container FS before building'
+    Write-Host '  .\run-vllm-dev.ps1 -Setup -WorkVolume vllm-work   # use named volume at /opt/work for large, persistent space'
     Write-Host '  .\run-vllm-dev.ps1 -Recreate -GPUCheck # remove stale container and run fresh GPU check'
     exit 0
 }
@@ -115,7 +117,9 @@ if ($LASTEXITCODE -ne 0) { Write-Host "❌ Image missing. Use -Build." -Foregrou
 
 # Base args (no default /tmp tmpfs; can be enabled via VLLM_TMPFS_TMP_SIZE)
 $runArgs = @("run","--rm","--security-opt=label=disable","--shm-size","8g","-v","${SourceDir}:/workspace:Z")
-if ($WorkDirHost -and (Test-Path $WorkDirHost)) {
+if (-not [string]::IsNullOrWhiteSpace($WorkVolume)) {
+    $runArgs += @('-v',"${WorkVolume}:/opt/work:Z")
+} elseif ($WorkDirHost -and (Test-Path $WorkDirHost)) {
     $runArgs += @('-v',"${WorkDirHost}:/opt/work:Z")
 }
 $runArgs += @('-w','/workspace','--name',"$ContainerName",'--user','vllmuser','--env','ENGINE=podman')

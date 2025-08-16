@@ -21,6 +21,7 @@ Options:
   -s, --setup        Run ./extras/dev-setup.sh inside container
   -p, --progress     Enable in-place progress display during setup
   -m, --mirror       Copy sources into container (LOCAL_MIRROR=1) for faster build on slow mounts
+  --work-volume NAME Mount named volume NAME at /opt/work (preferred over host path for large builds)
   -h, --help         Show this help and exit
   -n, --name NAME    Override container name (default: ${CONTAINER_NAME})
 
@@ -38,6 +39,7 @@ SETUP=0
 CMD=""
 MIRROR=0
 PROGRESS=0
+WORK_VOLUME=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -47,6 +49,7 @@ while [[ $# -gt 0 ]]; do
   -s|--setup) SETUP=1; shift ;;
   -h|--help) show_help; exit 0 ;;
   -m|--mirror) MIRROR=1; shift ;;
+  --work-volume) WORK_VOLUME="$2"; shift 2 ;;
   -n|--name) CONTAINER_NAME="$2"; shift 2 ;;
   -p|--progress) PROGRESS=1; shift ;;
     *) echo "Unknown option: $1" >&2; show_help; exit 1 ;;
@@ -111,6 +114,10 @@ fi
 
 # Base run args (env baked into image; minimal extras)
 RUN_ARGS=(run --rm --device=nvidia.com/gpu=all --security-opt=label=disable --shm-size 8g --name "$CONTAINER_NAME" -v "${SOURCE_DIR}:/workspace:Z" -w /workspace --user vllmuser --env ENGINE=podman)
+# Prefer named volume for /opt/work if provided
+if [[ -n "$WORK_VOLUME" ]]; then
+  RUN_ARGS+=(-v "${WORK_VOLUME}:/opt/work:Z")
+fi
 # Allow configurable /tmp tmpfs size (default 0=disabled to avoid small tmpfs). Set VLLM_TMPFS_TMP_SIZE to e.g. 64g to enable.
 TMPFS_SIZE="${VLLM_TMPFS_TMP_SIZE:-0}"
 if [[ -n "$TMPFS_SIZE" && "$TMPFS_SIZE" != "0" ]]; then
