@@ -5,6 +5,7 @@ This directory is gitignored and intended for local-only secret material such as
 Files are expected to be simple KEY=VALUE lines that can be sourced by shell scripts.
 
 Examples:
+
 - hf-credentials.env
 - cn-modelhub-credentials.env
 

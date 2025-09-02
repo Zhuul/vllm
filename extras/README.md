@@ -24,14 +24,14 @@ Deprecation: the legacy launchers `extras/run-vllm-dev.sh` and `extras/run-vllm-
 Examples
 
 - Windows (PowerShell):
-	- Build image: `./extras/podman/run.ps1 -Build`
-	- GPU check: `./extras/podman/run.ps1 -GPUCheck`
-	- Setup build: `./extras/podman/run.ps1 -Setup -WorkVolume vllm-work -Progress`
+    - Build image: `./extras/podman/run.ps1 -Build`
+    - GPU check: `./extras/podman/run.ps1 -GPUCheck`
+    - Setup build: `./extras/podman/run.ps1 -Setup -WorkVolume vllm-work -Progress`
 
 - Linux/macOS (bash):
-	- Build image: `extras/podman/run.sh --build`
-	- GPU check: `extras/podman/run.sh --gpu-check`
-	- Setup build: `extras/podman/run.sh --setup --work-volume vllm-work --progress`
+    - Build image: `extras/podman/run.sh --build`
+    - GPU check: `extras/podman/run.sh --gpu-check`
+    - Setup build: `extras/podman/run.sh --setup --work-volume vllm-work --progress`
 
 ## Secrets
 
