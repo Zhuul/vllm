@@ -9,9 +9,8 @@ import pytest
 import torch
 
 from vllm.distributed.kv_events import AllBlocksCleared, BlockRemoved
-from vllm.multimodal.inputs import (MultiModalBatchedField,
-                                    MultiModalFieldElem, MultiModalKwargsItem,
-                                    PlaceholderRange)
+from vllm.multimodal.inputs import (MultiModalFeatureSpec,
+                                    MultiModalKwargsItem, PlaceholderRange)
 from vllm.sampling_params import SamplingParams
 from vllm.utils import sha256, sha256_cbor_64bit
 from vllm.v1.core.block_pool import BlockPool
@@ -34,23 +33,20 @@ def make_request(
     prompt_logprobs: Optional[int] = None,
     cache_salt: Optional[str] = None,
 ):
-    if mm_positions is None:
-        mm_kwargs = None
-    else:
-        mm_elem = MultiModalFieldElem(
-            modality="dummy_m",
-            key="dummy_k",
-            data=None,
-            field=MultiModalBatchedField(),
-        )
-        mm_item = MultiModalKwargsItem.from_elems([mm_elem])
-        mm_kwargs = [mm_item] * len(mm_positions)
+    mm_features = []
+    if mm_positions is not None:
+        for j, position in enumerate(mm_positions):
+            identifier = mm_hashes[j] if mm_hashes else f"hash_{j}"
+            mm_feature = MultiModalFeatureSpec(
+                data=MultiModalKwargsItem.dummy("dummy_m"),
+                mm_position=position,
+                identifier=identifier,
+                modality="image")
+            mm_features.append(mm_feature)
 
     return Request(request_id=request_id,
                    prompt_token_ids=prompt_token_ids,
-                   multi_modal_kwargs=mm_kwargs,
-                   multi_modal_hashes=mm_hashes,
-                   multi_modal_placeholders=mm_positions,
+                   mm_features=mm_features if mm_features else None,
                    sampling_params=SamplingParams(
                        max_tokens=17, prompt_logprobs=prompt_logprobs),
                    pooling_params=None,
