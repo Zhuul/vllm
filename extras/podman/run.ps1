@@ -10,11 +10,26 @@
 	[string]$WorkVolume = "",
 	[string]$WorkDirHost = "",
 	[switch]$Progress,
+	[switch]$NoCache,
+	[switch]$Pull,
 	[switch]$Help
 )
 
 if ($Help) {
-	Write-Host "Usage: extras/podman/run.ps1 [-Build] [-Interactive] [-Command <cmd>] [-Setup] [-GPUCheck] [-Mirror] [-Recreate] [-WorkVolume <name>] [-WorkDirHost <path>] [-Progress]"; exit 0
+	Write-Host "Usage: extras/podman/run.ps1 [options]"
+	Write-Host "  -Build                Build the dev image (reads extras/configs/build.env)"
+	Write-Host "  -Interactive          Start an interactive shell"
+	Write-Host "  -Command <cmd>        Run a command inside the dev container"
+	Write-Host "  -Setup                Run project setup inside the container"
+	Write-Host "  -GPUCheck             Run a CUDA/Torch sanity check"
+	Write-Host "  -Mirror               Use local mirror registries if configured"
+	Write-Host "  -Recreate             Recreate the container if running"
+	Write-Host "  -WorkVolume <name>    Named volume to mount at /opt/work"
+	Write-Host "  -WorkDirHost <path>   Host dir to mount at /opt/work"
+	Write-Host "  -Progress             Show progress bars in setup"
+	Write-Host "  -NoCache              Build image without using cache"
+	Write-Host "  -Pull                 Always attempt to pull newer base image"
+	return
 }
 
 if (-not $Interactive -and [string]::IsNullOrEmpty($Command) -and -not $GPUCheck -and -not $Setup) { $Interactive = $true }
@@ -28,8 +43,68 @@ $SourceDir = (Get-Location).Path
 Write-Host "🐋 vLLM Dev Container (Podman)" -ForegroundColor Green
 
 if ($Build) {
-	Write-Host "🔨 Building image..." -ForegroundColor Yellow
-	$buildCmd = @("build","-f","extras/Dockerfile","-t",$ImageTag,".")
+	Write-Host "🔨 Building image (honoring extras/configs/build.env)..." -ForegroundColor Yellow
+	$configPath = Join-Path $SourceDir "extras/configs/build.env"
+	$dockerfilePath = Join-Path $SourceDir "extras/Dockerfile"
+	$cudaVer = $null
+	$baseFlavor = $null
+	$archList = $null
+	$requireFfmpegArg = '1'
+	$tvRef = $null
+	$taRef = $null
+	function Get-DockerArgDefault([string]$name, [string]$fallback) {
+		if (Test-Path $dockerfilePath) {
+			$df = Get-Content -Raw -Path $dockerfilePath
+			$m = [regex]::Match($df, "(?m)^\s*ARG\s+${name}\s*=\s*([^\r\n]+)")
+			if ($m.Success) {
+				return $m.Groups[1].Value.Trim()
+			}
+		}
+		return $fallback
+	}
+	if (Test-Path $configPath) {
+		$cfg = Get-Content -Raw -Path $configPath
+		function Get-EnvDefault([string]$name, [string]$fallback) {
+			# Match a line like: export NAME=VALUE
+			$line = [regex]::Match($cfg, "(?m)^\s*export\s+${name}\s*=\s*([^\r\n]+)")
+			if (-not $line.Success) { return $fallback }
+			$val = $line.Groups[1].Value.Trim()
+			# Strip wrapping quotes if present
+			if (($val.StartsWith('"') -and $val.EndsWith('"')) -or ($val.StartsWith("'") -and $val.EndsWith("'"))) { $val = $val.Substring(1, $val.Length-2) }
+			# If value is Bash-style ${NAME:-default}, extract default
+			if ($val.StartsWith('${') -and $val.Contains(':-')) {
+				$idx = $val.IndexOf(':-'); $end = $val.IndexOf('}', $idx)
+				if ($idx -ge 0 -and $end -gt $idx) {
+					$def = $val.Substring($idx+2, $end-($idx+2)).Trim()
+					if (($def.StartsWith('"') -and $def.EndsWith('"')) -or ($def.StartsWith("'") -and $def.EndsWith("'"))) { $def = $def.Substring(1, $def.Length-2) }
+					return $def
+				}
+			}
+			return $val
+		}
+		$cudaVer = Get-EnvDefault -name 'CUDA_VERSION' -fallback (Get-DockerArgDefault 'CUDA_VERSION' '13.0.0')
+		$baseFlavor = Get-EnvDefault -name 'BASE_FLAVOR' -fallback (Get-DockerArgDefault 'BASE_FLAVOR' 'rockylinux9')
+		$archList = Get-EnvDefault -name 'TORCH_CUDA_ARCH_LIST' -fallback (Get-DockerArgDefault 'TORCH_CUDA_ARCH_LIST' '7.0 7.5 8.0 8.6 8.9 9.0 12.0 13.0')
+	# No longer used: wheels-only installs for torchvision/torchaudio
+		$requireFfmpeg = Get-EnvDefault -name 'REQUIRE_FFMPEG' -fallback (Get-DockerArgDefault 'REQUIRE_FFMPEG' '1')
+		if ($requireFfmpeg -match '^[01]$') { $requireFfmpegArg = $requireFfmpeg } else { $requireFfmpegArg = '1' }
+	}
+	# Derive PyTorch nightly index from CUDA version (e.g., 13.0 -> cu130, 12.9 -> cu129)
+	$torchCudaIndex = if ($cudaVer -match '^13\.') { 'cu130' } elseif ($cudaVer -match '^12\.9') { 'cu129' } else {
+		$parts = $cudaVer.Split('.')
+		if ($parts.Length -ge 2) { 'cu' + $parts[0] + $parts[1] + '0' } else { 'cu129' }
+	}
+	Write-Host ("Config: CUDA={0} BASE_FLAVOR={1} TORCH_CUDA_INDEX={2} ARCH_LIST=({3})" -f $cudaVer,$baseFlavor,$torchCudaIndex,$archList) -ForegroundColor DarkGray
+	$buildCmd = @("build","-f","extras/Dockerfile",
+		"--build-arg","CUDA_VERSION=$cudaVer",
+		"--build-arg","BASE_FLAVOR=$baseFlavor",
+		"--build-arg","TORCH_CUDA_INDEX=$torchCudaIndex",
+		"--build-arg","TORCH_CUDA_ARCH_LIST=$archList",
+	"--build-arg","REQUIRE_FFMPEG=$requireFfmpegArg",
+		"-t",$ImageTag,".")
+	# Use cache by default; add --no-cache only when requested
+	if ($NoCache) { $buildCmd = @($buildCmd[0],"--no-cache") + $buildCmd[1..($buildCmd.Length-1)] }
+	if ($Pull) { $buildCmd = @($buildCmd[0],"--pull=always") + $buildCmd[1..($buildCmd.Length-1)] }
 	& podman @buildCmd
 	if ($LASTEXITCODE -ne 0) { Write-Host "❌ Build failed" -ForegroundColor Red; exit 1 }
 	Write-Host "✅ Build ok" -ForegroundColor Green
@@ -155,8 +230,8 @@ rm -f /tmp/gpucheck.py
 	$gpuScript = "export NVIDIA_VISIBLE_DEVICES=all; export LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/lib/wsl/drivers:`$LD_LIBRARY_PATH; " + ($gpuScript -replace '__PY_B64__', $pyB64) -replace "`r",""
 	$runArgs += @('--user','root', $ImageTag,'bash','-lc',$gpuScript)
 } elseif ($Setup) {
-	# Use robust setup entrypoint that finds the right script (extras/dev-setup.sh, extras/old/dev-setup.sh, or image helper)
-	$prefix = "chmod +x ./extras/podman/dev-setup.sh 2>/dev/null || true; "
+	# Use robust setup entrypoint that finds the right script (extras/dev-setup.sh or image helper)
+	$prefix = 'for f in ./extras/dev-setup.sh ./extras/podman/dev-setup.sh; do if [ -f "$f" ]; then sed -i "s/\r$//" "$f" || true; fi; done; chmod +x ./extras/podman/dev-setup.sh 2>/dev/null || true; '
 	$envPrefix = ''
 	if ($Mirror) { $envPrefix += 'export LOCAL_MIRROR=1; ' }
 	if ($Progress) { $envPrefix += 'export PROGRESS_WATCH=1; ' }
@@ -168,7 +243,7 @@ rm -f /tmp/gpucheck.py
 	$runArgs += @('-it',$ImageTag,'bash')
 	Write-Host "🚀 Interactive shell" -ForegroundColor Green
 } elseif ($Command) {
-	$runArgs += @($ImageTag,'bash','-lc',"source /home/vllmuser/venv/bin/activate && $Command")
+	$runArgs += @($ImageTag,'bash','-lc',"export LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/lib/wsl/drivers:`$LD_LIBRARY_PATH; source /home/vllmuser/venv/bin/activate && $Command")
 	Write-Host "🚀 Running command" -ForegroundColor Green
 } else {
 	$runArgs += @($ImageTag)

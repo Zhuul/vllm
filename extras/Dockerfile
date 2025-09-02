@@ -1,7 +1,15 @@
 # vLLM Development Container with GPU Support
 # Uses vLLM's own requirements for automatic dependency management
 
-FROM nvidia/cuda:12.9.1-cudnn-devel-ubi9
+# Build-time args to control CUDA/OS base and PyTorch nightly index
+ARG CUDA_VERSION=13.0.0
+ARG UBI_VERSION=9
+ARG TORCH_CUDA_INDEX=cu130
+# Base flavor for CUDA image: e.g. 'rockylinux9' (default) or 'ubi9'
+ARG BASE_FLAVOR=rockylinux9
+
+# Switchable base: defaults to Rocky Linux to avoid subscription-gated repos
+FROM nvidia/cuda:${CUDA_VERSION}-cudnn-devel-${BASE_FLAVOR}
 
 # Set CUDA environment variables for build tools
 ENV CUDA_HOME=/usr/local/cuda
@@ -15,13 +23,19 @@ ENV CUDNN_INCLUDE_PATH=/usr/include
 # Install system packages with additional CUDA development libraries
 RUN dnf update -y && dnf install --allowerasing -y \
     python3 python3-pip python3-devel \
-    git gcc gcc-c++ cmake ninja-build \
+    git gcc gcc-c++ cmake \
     make patch which findutils tar rsync \
-    wget curl vim nano \
+    wget curl vim nano pkgconfig \
+    zlib-devel bzip2 bzip2-devel xz xz-devel libffi-devel \
+    openssl-devel sqlite-devel \
+    && (dnf install -y readline-devel || true) \
     && dnf clean all
 
-# Create symlinks for python
-RUN ln -sf /usr/bin/python3 /usr/bin/python
+# Prefer Python 3.12 from packages if available (fallback to system python3)
+RUN dnf install -y python3.12 python3.12-devel || true
+
+## Ensure /usr/bin/python exists for compatibility
+RUN ln -sf $(command -v python3) /usr/bin/python || true
 
 # Create a non-root user for development
 RUN useradd -m -s /bin/bash vllmuser && \
@@ -29,6 +43,44 @@ RUN useradd -m -s /bin/bash vllmuser && \
 
 # Install essential system tools
 RUN dnf install -y hostname iproute iputils
+
+ARG REQUIRE_FFMPEG=1
+# Multimedia and image libs with optional ffmpeg-devel enforcement
+# Install EPEL and RPM Fusion repos for EL (9/10) and pull ffmpeg/ffmpeg-devel from there.
+# When REQUIRE_FFMPEG=1, fail the build if ffmpeg is still unavailable.
+RUN set -euxo pipefail \
+        && (dnf install -y dnf-plugins-core || true) \
+        && (dnf config-manager --set-enabled crb || true) \
+        && (dnf makecache -y || true) \
+    && . /etc/os-release \
+    && ELVER="${VERSION_ID%%.*}" \
+    && echo "[Dockerfile] Detected Enterprise Linux major version: ${ELVER}" \
+        && dnf install -y \
+                libjpeg-turbo-devel libpng-devel zlib-devel freetype-devel \
+                libsndfile libsndfile-devel sox sox-devel || true \
+        && if [ "${REQUIRE_FFMPEG}" = "1" ]; then \
+         echo "[Dockerfile] Enabling EPEL and RPM Fusion for ffmpeg (EL${ELVER})"; \
+         dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${ELVER}.noarch.rpm; \
+         dnf install -y https://download1.rpmfusion.org/free/el/rpmfusion-free-release-${ELVER}.noarch.rpm; \
+         dnf install -y https://download1.rpmfusion.org/nonfree/el/rpmfusion-nonfree-release-${ELVER}.noarch.rpm; \
+                 dnf makecache -y; \
+                 dnf install -y ffmpeg ffmpeg-devel; \
+                 command -v ffmpeg >/dev/null 2>&1; \
+             else \
+                 # Best-effort install when not enforced
+         (dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${ELVER}.noarch.rpm || true); \
+         (dnf install -y https://download1.rpmfusion.org/free/el/rpmfusion-free-release-${ELVER}.noarch.rpm || true); \
+         (dnf install -y https://download1.rpmfusion.org/nonfree/el/rpmfusion-nonfree-release-${ELVER}.noarch.rpm || true); \
+                 (dnf makecache -y || true); \
+                 (dnf install -y ffmpeg ffmpeg-devel || true); \
+             fi \
+        && (dnf install -y --enablerepo=crb ninja-build || \
+            dnf install -y --enablerepo=crb ninja || \
+            dnf install -y ninja-build || \
+            dnf install -y ninja || true) \
+    && dnf clean all || true
+
+
 
 # Add NVIDIA Machine Learning repo for RHEL9/UBI9 and install NCCL runtime/devel
 # Needed for PyTorch nightly cu129 to avoid ncclCommWindowRegister symbol errors
@@ -55,9 +107,9 @@ RUN mkdir -p /workspace/.deps && chown -R vllmuser:vllmuser /workspace/.deps && 
 # Switch to the non-root user
 USER vllmuser
 
-# Create and activate virtual environment
+# Create and activate virtual environment using the best available Python (3.12 preferred)
 ENV VIRTUAL_ENV=/home/vllmuser/venv
-RUN python3 -m venv $VIRTUAL_ENV
+RUN PY_BIN="$(command -v python3.12 || command -v python3)" && "$PY_BIN" -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # Set pip configuration
@@ -68,13 +120,31 @@ ENV PIP_DEFAULT_TIMEOUT=120
 ENV PIP_RETRIES=5
 ENV PIP_PREFER_BINARY=1
 
+# CUDA arch list including legacy + latest so builds cover both older and newest GPUs.
+# Can be overridden at build time with: --build-arg TORCH_CUDA_ARCH_LIST="..."
+ARG TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0 12.0 13.0"
+ENV TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}"
+
 # Upgrade pip and setuptools to latest versions
 RUN pip install --upgrade pip setuptools>=61 wheel
 
 COPY requirements/ /tmp/requirements/
 
 # Install PyTorch nightly first (includes latest GPU arch support such as Blackwell sm_120 when present)
-RUN pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129
+ARG TORCH_CUDA_INDEX
+RUN pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/${TORCH_CUDA_INDEX}
+
+RUN pip install --pre torchvision --index-url https://download.pytorch.org/whl/nightly/${TORCH_CUDA_INDEX}
+RUN pip install --pre torchaudio --index-url https://download.pytorch.org/whl/nightly/${TORCH_CUDA_INDEX}
+
+# Install PyAV for torchvision video I/O (read_video) compatibility
+RUN pip install --upgrade av
+
+# Install TorchCodec to support torchaudio.load on recent nightlies
+RUN set -euxo pipefail \
+    && (pip install --pre torchcodec \
+        || pip install torchcodec \
+        || pip install --no-deps 'git+https://github.com/pytorch/torchcodec@main')
 
 # Install modern build tools and vLLM's build dependencies and CUDA deps early,
 # but sanitize requirements to avoid downgrading torch-family or forcing xformers pins.
@@ -93,7 +163,7 @@ RUN set -euxo pipefail \
         -r /tmp/requirements_sanitized/cuda.txt \
         -r /tmp/requirements_sanitized/common.txt \
     && pip install --pre --upgrade \
-        torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu129
+        torch --index-url https://download.pytorch.org/whl/nightly/${TORCH_CUDA_INDEX}
 
 # Install minimal development extras
 RUN pip install pytest pytest-asyncio ipython
@@ -146,8 +216,7 @@ ENV CCACHE_DIR=/home/vllmuser/.ccache
 ENV CCACHE_MAXSIZE=10G
 ENV PATH=/usr/lib64/ccache:$PATH
 
-# CUDA arch list including legacy + latest (sm_120) so builds cover both older and newest GPUs.
-ENV TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0 12.0"
+# (TORCH_CUDA_ARCH_LIST defined earlier)
 # Do not force-disable Machete; allow upstream defaults. User may still pass -e CMAKE_ARGS for custom CMake settings.
 ENV CMAKE_ARGS=""
 
