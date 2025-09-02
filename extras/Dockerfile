@@ -203,8 +203,30 @@ RUN echo '#!/bin/bash' > /home/vllmuser/setup_vllm_dev.sh && \
     echo 'python -c "import vllm; print(\"vLLM version:\", vllm.__version__)"' >> /home/vllmuser/setup_vllm_dev.sh && \
     chmod +x /home/vllmuser/setup_vllm_dev.sh
 
+# Provide a helper to apply repo patches against the mounted /workspace
+# Create under /usr/local/bin as root, then switch back to non-root user
+USER root
+RUN printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'cd /workspace 2>/dev/null || exit 0' \
+    'SCRIPT=./extras/patches/apply_patches.sh' \
+    'if [ -f "$SCRIPT" ]; then' \
+    '  echo "[apply-patches] Running $SCRIPT"' \
+    '  # Copy to temp and normalize EOL to avoid permission errors on mounted FS' \
+    '  TMP_SCRIPT=$(mktemp /tmp/apply_patches.XXXXXX.sh)' \
+    '  tr -d '\''\r'\'' < "$SCRIPT" > "$TMP_SCRIPT" || cp "$SCRIPT" "$TMP_SCRIPT"' \
+    '  chmod +x "$TMP_SCRIPT"' \
+    '  bash "$TMP_SCRIPT" || {' \
+    '    echo "[apply-patches] Warning: patch apply failed (continuing)" >&2; exit 0; }' \
+    'fi' \
+    > /usr/local/bin/apply-vllm-patches && \
+    chmod +x /usr/local/bin/apply-vllm-patches
+USER vllmuser
+
 # Add environment variables for better CUDA memory management and build optimization
-ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Use the new variable name to avoid deprecation warnings.
+ENV PYTORCH_ALLOC_CONF=expandable_segments:True
 # Do not pin a single GPU here; let runtime inject device selection
 # ENV CUDA_VISIBLE_DEVICES=0
 ENV CMAKE_BUILD_PARALLEL_LEVEL=4

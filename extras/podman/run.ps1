@@ -171,6 +171,8 @@ $runArgs = @("run","--rm","--security-opt=label=disable","--shm-size","8g","-v",
 if (-not [string]::IsNullOrWhiteSpace($WorkVolume)) { $runArgs += @('-v',"${WorkVolume}:/opt/work:Z") }
 elseif ($WorkDirHost -and (Test-Path $WorkDirHost)) { $runArgs += @('-v',"${WorkDirHost}:/opt/work:Z") }
 $runArgs += @('-w','/workspace','--name',"$ContainerName",'--user','vllmuser','--env','ENGINE=podman')
+# Use a tiny entrypoint to apply patches before executing the requested command
+$runArgs += @('--entrypoint','/workspace/extras/podman/entrypoint/apply-patches-then-exec.sh')
 
 $tmpfsSize = [Environment]::GetEnvironmentVariable('VLLM_TMPFS_TMP_SIZE')
 if (-not [string]::IsNullOrEmpty($tmpfsSize) -and $tmpfsSize -ne '0') { $runArgs += @('--tmpfs',"/tmp:size=$tmpfsSize") }
@@ -231,7 +233,7 @@ rm -f /tmp/gpucheck.py
 	$runArgs += @('--user','root', $ImageTag,'bash','-lc',$gpuScript)
 } elseif ($Setup) {
 	# Use robust setup entrypoint that finds the right script (extras/dev-setup.sh or image helper)
-	$prefix = 'for f in ./extras/dev-setup.sh ./extras/podman/dev-setup.sh; do if [ -f "$f" ]; then sed -i "s/\r$//" "$f" || true; fi; done; chmod +x ./extras/podman/dev-setup.sh 2>/dev/null || true; '
+	$prefix = 'for f in ./extras/dev-setup.sh ./extras/podman/dev-setup.sh; do if [ -f "$f" ]; then sed -i "s/\r$//" "$f" || true; fi; done; chmod +x ./extras/podman/dev-setup.sh 2>/dev/null || true; apply-vllm-patches || true; '
 	$envPrefix = ''
 	if ($Mirror) { $envPrefix += 'export LOCAL_MIRROR=1; ' }
 	if ($Progress) { $envPrefix += 'export PROGRESS_WATCH=1; ' }
