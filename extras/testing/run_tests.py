@@ -16,8 +16,8 @@ from datetime import datetime
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--cuda-version",
-                   default=os.getenv("CUDA_VERSION", "12.9.1"))
-    p.add_argument("--ubi-version", default=os.getenv("UBI_VERSION", "9.4"))
+                   default=os.getenv("CUDA_VERSION", "13.0.0"))
+    p.add_argument("--ubi-version", default=os.getenv("UBI_VERSION", "9"))
     p.add_argument("--models", default="Example-Llama3-8B")
     p.add_argument("--output-dir",
                    default=os.path.join("extras", "testing", "results",

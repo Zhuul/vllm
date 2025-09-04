@@ -13,7 +13,7 @@ if [ -f "${CONFIG_DIR}/build.env" ]; then
   source "${CONFIG_DIR}/build.env"
 fi
 
-CUDA_VERSION=${CUDA_VERSION:-12.9.1}
+CUDA_VERSION=${CUDA_VERSION:-13.0.0}
 UBI_VERSION=${UBI_VERSION:-9}
 VLLM_IMAGE_TAG=${VLLM_IMAGE_TAG:-"vllm-cuda${CUDA_VERSION}-ubi${UBI_VERSION}"}
 

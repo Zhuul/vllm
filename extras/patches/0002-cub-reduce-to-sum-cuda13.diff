@@ -1,0 +1,59 @@
+diff --git a/csrc/layernorm_kernels.cu b/csrc/layernorm_kernels.cu
+--- a/csrc/layernorm_kernels.cu
++++ b/csrc/layernorm_kernels.cu
+@@
+   using BlockReduce = cub::BlockReduce<float, 1024>;
+   __shared__ typename BlockReduce::TempStorage reduceStore;
+-  variance = BlockReduce(reduceStore).Reduce(variance, cub::Sum{}, blockDim.x);
++  // CUDA 13's CUB/CCCL may not provide cub::Sum in this context; use Sum()
++  variance = BlockReduce(reduceStore).Sum(variance);
+@@
+   using BlockReduce = cub::BlockReduce<float, 1024>;
+   __shared__ typename BlockReduce::TempStorage reduceStore;
+-  variance = BlockReduce(reduceStore).Reduce(variance, cub::Sum{}, blockDim.x);
++  // CUDA 13's CUB/CCCL may not provide cub::Sum in this context; use Sum()
++  variance = BlockReduce(reduceStore).Sum(variance);
+@@
+   using BlockReduce = cub::BlockReduce<float, 1024>;
+   __shared__ typename BlockReduce::TempStorage reduceStore;
+-  variance = BlockReduce(reduceStore).Reduce(variance, cub::Sum{}, blockDim.x);
++  // CUDA 13's CUB/CCCL may not provide cub::Sum in this context; use Sum()
++  variance = BlockReduce(reduceStore).Sum(variance);
+
+   diff --git a/csrc/layernorm_quant_kernels.cu b/csrc/layernorm_quant_kernels.cu
+   --- a/csrc/layernorm_quant_kernels.cu
+   +++ b/csrc/layernorm_quant_kernels.cu
+   @@
+      using BlockReduce = cub::BlockReduce<float, 1024>;
+      __shared__ typename BlockReduce::TempStorage reduceStore;
+   -  variance = BlockReduce(reduceStore).Reduce(variance, cub::Sum{}, blockDim.x);
+   +  // CUDA 13's CUB/CCCL may not provide cub::Sum in this context; use Sum()
+   +  variance = BlockReduce(reduceStore).Sum(variance);
+   @@
+      using BlockReduce = cub::BlockReduce<float, 1024>;
+      __shared__ typename BlockReduce::TempStorage reduceStore;
+   -  variance = BlockReduce(reduceStore).Reduce(variance, cub::Sum{}, blockDim.x);
+   +  // CUDA 13's CUB/CCCL may not provide cub::Sum in this context; use Sum()
+   +  variance = BlockReduce(reduceStore).Sum(variance);
+   @@
+      using BlockReduce = cub::BlockReduce<float, 1024>;
+      __shared__ typename BlockReduce::TempStorage reduceStore;
+   -  variance = BlockReduce(reduceStore).Reduce(variance, cub::Sum{}, blockDim.x);
+   +  // CUDA 13's CUB/CCCL may not provide cub::Sum in this context; use Sum()
+   +  variance = BlockReduce(reduceStore).Sum(variance);
+
+   diff --git a/csrc/quantization/fused_kernels/layernorm_utils.cuh b/csrc/quantization/fused_kernels/layernorm_utils.cuh
+   --- a/csrc/quantization/fused_kernels/layernorm_utils.cuh
+   +++ b/csrc/quantization/fused_kernels/layernorm_utils.cuh
+   @@
+      using BlockReduce = cub::BlockReduce<float, 1024>;
+      __shared__ typename BlockReduce::TempStorage reduceStore;
+   -  ss = BlockReduce(reduceStore).Reduce(ss, cub::Sum{}, blockDim.x);
+   +  // CUDA 13's CUB/CCCL may not provide cub::Sum in this context; use Sum()
+   +  ss = BlockReduce(reduceStore).Sum(ss);
+   @@
+      using BlockReduce = cub::BlockReduce<float, 1024>;
+      __shared__ typename BlockReduce::TempStorage reduceStore;
+   -  ss = BlockReduce(reduceStore).Reduce(ss, cub::Sum{}, blockDim.x);
+   +  // CUDA 13's CUB/CCCL may not provide cub::Sum in this context; use Sum()
+   +  ss = BlockReduce(reduceStore).Sum(ss);

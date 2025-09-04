@@ -120,10 +120,15 @@ ENV PIP_DEFAULT_TIMEOUT=120
 ENV PIP_RETRIES=5
 ENV PIP_PREFER_BINARY=1
 
-# CUDA arch list including legacy + latest so builds cover both older and newest GPUs.
-# Can be overridden at build time with: --build-arg TORCH_CUDA_ARCH_LIST="..."
-ARG TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0 12.0 13.0"
+# CUDA arch list: CUDA 13+ drops SM70/SM75; default to supported archs only.
+# Override at build time with: --build-arg TORCH_CUDA_ARCH_LIST="..."
+ARG TORCH_CUDA_ARCH_LIST="8.0 8.6 8.9 9.0 12.0 13.0"
 ENV TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}"
+
+# Also set CUDAARCHS (semicolon separated) for CMake/NVCC generators.
+# Override at build time with: --build-arg CUDA_ARCHS="80;86;89;90;120"
+ARG CUDA_ARCHS="80;86;89;90;120"
+ENV CUDAARCHS="${CUDA_ARCHS}"
 
 # Upgrade pip and setuptools to latest versions
 RUN pip install --upgrade pip setuptools>=61 wheel

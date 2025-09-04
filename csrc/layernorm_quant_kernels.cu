@@ -39,7 +39,7 @@ __global__ void rms_norm_static_fp8_quant_kernel(
 
   using BlockReduce = cub::BlockReduce<float, 1024>;
   __shared__ typename BlockReduce::TempStorage reduceStore;
-  variance = BlockReduce(reduceStore).Reduce(variance, cub::Sum{}, blockDim.x);
+  variance = BlockReduce(reduceStore).Reduce(variance, cub::Sum());
 
   if (threadIdx.x == 0) {
     s_variance = rsqrtf(variance / hidden_size + epsilon);
@@ -100,7 +100,7 @@ fused_add_rms_norm_static_fp8_quant_kernel(
 
   using BlockReduce = cub::BlockReduce<float, 1024>;
   __shared__ typename BlockReduce::TempStorage reduceStore;
-  variance = BlockReduce(reduceStore).Reduce(variance, cub::Sum{}, blockDim.x);
+  variance = BlockReduce(reduceStore).Reduce(variance, cub::Sum());
 
   if (threadIdx.x == 0) {
     s_variance = rsqrtf(variance / hidden_size + epsilon);
@@ -149,7 +149,7 @@ fused_add_rms_norm_static_fp8_quant_kernel(
 
   using BlockReduce = cub::BlockReduce<float, 1024>;
   __shared__ typename BlockReduce::TempStorage reduceStore;
-  variance = BlockReduce(reduceStore).Reduce(variance, cub::Sum{}, blockDim.x);
+  variance = BlockReduce(reduceStore).Reduce(variance, cub::Sum());
 
   if (threadIdx.x == 0) {
     s_variance = rsqrtf(variance / hidden_size + epsilon);

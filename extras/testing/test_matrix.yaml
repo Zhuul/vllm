@@ -7,8 +7,8 @@ models:
       temperature: 0.7
 
 environments:
-  - cuda: 12.9.1
-    ubi: 9.4
+  - cuda: 13.0.0
+    ubi: 9
 
 benchmarks:
   - name: inference_speed

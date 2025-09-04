@@ -1,12 +1,30 @@
 # Podman helpers for vLLM
 
-This folder contains Podman-specific wrappers. They preserve back-compat by calling the existing scripts in `extras/` when present.
+These wrappers build and run a CUDA 13 dev container with PyTorch nightlies.
 
-- Containerfile: Thin wrapper that defers to `extras/Dockerfile` by default.
-- build.sh: Builds the image using values from `../configs/build.env`.
-- entrypoint/: Optional entrypoint scripts used inside containers.
-- scripts/: Utility helpers for Podman machine/GPU/volumes.
+Key features
 
-See README for usage.
+- Windows/WSL and Linux support (PowerShell and bash launchers)
+- Auto-apply patches on container start (CRLF-safe, idempotent)
+- CUDA arch policy aligned with CUDA 13 (no SM70/SM75)
+- Named volume mounting for faster builds (`/opt/work`)
 
-Documentation: see `docs/contributing/podman-dev.md` for the Podman-first workflow and deprecation notes for legacy launchers.
+Launchers
+
+- Windows: `extras/podman/run.ps1`
+- Linux/macOS: `extras/podman/run.sh`
+
+Common options
+
+- Build: `-Build` (ps1) / `--build` (sh)
+- GPU check: `-GPUCheck` / `--gpu-check`
+- Setup (editable install): `-Setup` / `--setup`
+- Work volume: `-WorkVolume NAME` / `--work-volume NAME`
+- Progress: `-Progress` / `--progress`
+- Mirror sources: `-Mirror` / `--mirror`
+
+Notes
+
+- Scripts normalize CRLF by running a temp copy to avoid chmod/sed on Windows mounts.
+- CUDA arch defaults can be changed in `extras/configs/build.env`.
+- The entrypoint is `apply-patches-then-exec.sh`, which runs patching before your command.

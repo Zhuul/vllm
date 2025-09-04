@@ -1,50 +1,65 @@
 # extras/ overview
 
-This directory hosts all non-core assets: container/build tooling, configs, testing, storage helpers, and optional patches. The goals are clarity, single-responsibility, and easy extension without touching the vLLM core.
+This directory hosts non-core assets: container/build tooling, configs, testing, storage helpers, and optional patches. Everything here is designed to be self-contained and safe for Windows + WSL and Linux.
 
-Suggested layout (implemented here):
+Layout
 
-- podman/ — Podman-specific build/launch wrappers and helpers
-- configs/ — Centralized, declarative versions and build configuration
-- secrets/ — Gitignored area for local tokens/config (not committed)
-- testing/ — Test/benchmark harness, matrices, and results
-- storage/ — External volumes and cache management helpers
-- patches/ — Optional patch/plug-in mechanism for controlled tweaks
+- podman/ — Podman-first run/build wrappers (Windows PowerShell + bash)
+- configs/ — Centralized versions and build configuration
+- patches/ — Optional patches applied automatically at container start
+- storage/ — Volume/caching helpers
+- testing/ — Test harness, matrices, and results
+- secrets/ — Local, gitignored credentials
 
-Primary entrypoint: use `extras/podman/` as the canonical way to build and run the dev container.
+Primary entrypoint: `extras/podman/run.ps1` (Windows) or `extras/podman/run.sh` (Linux/macOS).
 
-Deprecation: the legacy launchers `extras/run-vllm-dev.sh` and `extras/run-vllm-dev.ps1` are deprecated and now forward to the Podman wrappers. Please switch to `extras/podman/run.sh` (Linux/macOS) or `extras/podman/run.ps1` (Windows).
+## What’s new
+
+- CUDA 13.0 base (Rocky Linux 9) with PyTorch nightlies and ffmpeg stack.
+- Default CUDA arch policy updated for CUDA 13 (drops SM70/SM75):
+    - TORCH_CUDA_ARCH_LIST: "8.0 8.6 8.9 9.0 12.0 13.0"
+    - CUDAARCHS: "80;86;89;90;120"
+    - Override via `extras/configs/build.env` or environment variables.
+- Auto-patch on container start (idempotent, CRLF-safe):
+    - 0001-cumem-alloc-env-fallback.diff — prefer PYTORCH_ALLOC_CONF
+    - 0002-cub-reduce-to-sum-cuda13.diff — CUB Reduce->Sum compatibility
+- Setup flow is CRLF/WSL-safe: scripts run from a normalized temp copy.
 
 ## Quick start
 
-- Edit `extras/configs/build.env` to set CUDA/UBI/Python defaults.
-- Use `extras/podman/build.sh` to build images with those defaults.
-- Use `extras/podman/run.ps1` (Windows) or `extras/podman/run.sh` (Linux/macOS) to run the dev container.
+1) Configure (optional): edit `extras/configs/build.env`.
+2) Build the image:
+     - Windows: `./extras/podman/run.ps1 -Build`
+     - Linux/macOS: `extras/podman/run.sh --build`
+3) GPU check:
+     - Windows: `./extras/podman/run.ps1 -GPUCheck`
+     - Linux/macOS: `extras/podman/run.sh --gpu-check`
+4) Install vLLM in editable mode (compiles extensions):
+     - Windows: `./extras/podman/run.ps1 -Setup -WorkVolume vllm-work -Progress`
+     - Linux/macOS: `extras/podman/run.sh --setup --work-volume vllm-work --progress`
 
-Examples
+Notes for Windows/WSL
 
-- Windows (PowerShell):
-    - Build image: `./extras/podman/run.ps1 -Build`
-    - GPU check: `./extras/podman/run.ps1 -GPUCheck`
-    - Setup build: `./extras/podman/run.ps1 -Setup -WorkVolume vllm-work -Progress`
-
-- Linux/macOS (bash):
-    - Build image: `extras/podman/run.sh --build`
-    - GPU check: `extras/podman/run.sh --gpu-check`
-    - Setup build: `extras/podman/run.sh --setup --work-volume vllm-work --progress`
-
-## Secrets
-
-Place tokens in `extras/secrets/` per its README and never commit them. Load them in session or bind-mount into containers.
-
-## Testing
-
-See `extras/testing/README.md` for defining a matrix, recording results, and comparing runs.
-
-## Storage
-
-See `extras/storage/README.md` for model/cache volume guidance for performance and reproducibility.
+- The launcher maps /dev/dxg and WSL libraries automatically; NV env vars are set safely (no "void").
+- PowerShell quoting for inline Python:
+    - `./extras/podman/run.ps1 -Command 'python -c "import torch;print(torch.__version__)"'`
+- Scripts avoid in-place edits on the mounted repo to prevent permission errors.
 
 ## Patches
 
-If you need to tweak upstream vLLM without forking, use `extras/patches/` to stage diffs and apply them during build.
+Place `.diff` files in `extras/patches/`. On container start, a helper normalizes CRLF, applies patches, or uses targeted Python fallbacks for known fragile hunks. No source-file changes are committed to the host by design.
+
+## Storage and caches
+
+Use a named volume for large builds and cache:
+
+- `-WorkVolume vllm-work` (PowerShell)
+- `--work-volume vllm-work` (bash)
+
+## Testing
+
+See `extras/testing/README.md` for matrix and run helpers.
+
+## Secrets
+
+See `extras/secrets/README.md` for token handling.
