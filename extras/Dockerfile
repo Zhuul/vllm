@@ -231,7 +231,9 @@ USER vllmuser
 
 # Add environment variables for better CUDA memory management and build optimization
 # Use the new variable name to avoid deprecation warnings.
-ENV PYTORCH_ALLOC_CONF=expandable_segments:True
+# (Not working with vllm)
+# ENV PYTORCH_ALLOC_CONF=expandable_segments:True
+#
 # Do not pin a single GPU here; let runtime inject device selection
 # ENV CUDA_VISIBLE_DEVICES=0
 ENV CMAKE_BUILD_PARALLEL_LEVEL=4
