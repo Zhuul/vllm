@@ -127,6 +127,25 @@ for path in files:
 
   new_src = pat.sub(repl, src)
 
+  # Extra hardening: explicitly catch method form across line breaks:
+  pat2_max = re.compile(r"(BlockReduce\([^)]*\))\s*\.\s*Max\(\s*([^)]+?)\s*\)", re.DOTALL)
+  pat2_min = re.compile(r"(BlockReduce\([^)]*\))\s*\.\s*Min\(\s*([^)]+?)\s*\)", re.DOTALL)
+  pat2_sum = re.compile(r"(BlockReduce\([^)]*\))\s*\.\s*Sum\(\s*([^)]+?)\s*\)", re.DOTALL)
+
+  def repl2(recv, expr, op):
+    expr = expr.strip()
+    if op == 'Max':
+      lam = '[] __device__ (auto a, auto b) { return a > b ? a : b; }'
+    elif op == 'Min':
+      lam = '[] __device__ (auto a, auto b) { return a < b ? a : b; }'
+    else:
+      lam = '[] __device__ (auto a, auto b) { return a + b; }'
+    return f"{recv}.Reduce({expr}, {lam})"
+
+  new_src = pat2_max.sub(lambda m: repl2(m.group(1), m.group(2), 'Max'), new_src)
+  new_src = pat2_min.sub(lambda m: repl2(m.group(1), m.group(2), 'Min'), new_src)
+  new_src = pat2_sum.sub(lambda m: repl2(m.group(1), m.group(2), 'Sum'), new_src)
+
   if new_src != src:
     with io.open(path, 'w', encoding='utf-8', newline='\n') as f:
       f.write(new_src)
@@ -148,9 +167,20 @@ except FileNotFoundError:
   print('[patches] cumem.py not found; skipping assert relax')
 else:
   new_src = src
-  # Remove hard assert on expandable_segments and replace with a runtime note.
-  new_src = re.sub(r"^\s*assert\s+\"expandable_segments:True\"\s+not\s+in\s+conf,\s*\\\n.*?\\\n\s*\)\s*$",
-           "\n", new_src, flags=re.MULTILINE)
+  # Remove the multi-line assert block guarding expandable_segments
+  new_src = re.sub(
+    r"assert\s+\"expandable_segments:True\"\s+not\s+in\s+conf,\s*\\\n\s*\(.*?\)\s*\n",
+    "",
+    new_src,
+    flags=re.DOTALL,
+  )
+  # If a single-line variant exists, remove it too
+  new_src = re.sub(
+    r"^\s*assert\s+\"expandable_segments:True\".*$\n",
+    "",
+    new_src,
+    flags=re.MULTILINE,
+  )
   if new_src != src:
     with io.open(path, 'w', encoding='utf-8', newline='\n') as f:
       f.write(new_src)
