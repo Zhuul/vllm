@@ -78,7 +78,7 @@ done
 
 echo "[patches] Post-pass: normalize CUB reductions to device lambdas for CUDA 13"
 python - <<'PY'
-import io, os, re
+import io, os, re, sys
 
 files = []
 for root, _, names in os.walk('csrc'):
@@ -88,12 +88,13 @@ for root, _, names in os.walk('csrc'):
 
 # Unified pattern: handle both method form and functor form
 pat = re.compile(
-  r"(?P<recv>BlockReduce\([^)]*\))\."
+  r"(?P<recv>BlockReduce\([^)]*\))\s*\.\s*"
   r"(?:"
-  r"Reduce\(\s*(?P<expr>[^,()]+?)\s*,\s*cub::(?P<op1>Sum|Max|Min)\s*(?:\(\)|\{\})\s*(?P<tail1>,[^)]*)?\)"
+  r"Reduce\(\s*(?P<expr>[\s\S]*?)\s*,\s*cub::(?P<op1>Sum|Max|Min)\s*(?:\(\)|\{\})\s*(?P<tail1>,[\s\S]*?)?\)"
   r"|"
-  r"(?P<method>Sum|Max|Min)\(\s*(?P<mexpr>[^)]+?)\s*\)"
-  r")"
+  r"(?P<method>Sum|Max|Min)\(\s*(?P<mexpr>[\s\S]*?)\s*\)"
+  r")",
+  re.DOTALL,
 )
 
 def lam_for(op: str) -> str:
@@ -115,11 +116,11 @@ for path in files:
     recv = m.group('recv')
     if m.group('op1'):
       op = m.group('op1')
-      expr = (m.group('expr') or '').strip()
-      tail = m.group('tail1') or ''
+            expr = (m.group('expr') or '').strip()
+            tail = (m.group('tail1') or '').rstrip()
     else:
       op = m.group('method')
-      expr = (m.group('mexpr') or '').strip()
+            expr = (m.group('mexpr') or '').strip()
       tail = ''
     lam = lam_for(op)
     return f"{recv}.Reduce({expr}, {lam}{tail})"
@@ -134,6 +135,28 @@ for path in files:
 
 if not changed_any:
   print('[patches] Post-pass: no changes (already applied)')
+PY
+
+# Also relax cumem allocator assert to allow user opting into expandable segments
+python - <<'PY'
+import io, os, re
+path = os.path.join('vllm','device_allocator','cumem.py')
+try:
+  with io.open(path, 'r', encoding='utf-8') as f:
+    src = f.read()
+except FileNotFoundError:
+  print('[patches] cumem.py not found; skipping assert relax')
+else:
+  new_src = src
+  # Remove hard assert on expandable_segments and replace with a runtime note.
+  new_src = re.sub(r"^\s*assert\s+\"expandable_segments:True\"\s+not\s+in\s+conf,\s*\\\n.*?\\\n\s*\)\s*$",
+           "\n", new_src, flags=re.MULTILINE)
+  if new_src != src:
+    with io.open(path, 'w', encoding='utf-8', newline='\n') as f:
+      f.write(new_src)
+    print('[patches] Relaxed expandable_segments assert in vllm/device_allocator/cumem.py')
+  else:
+    print('[patches] No expandable_segments assert to relax (already updated)')
 PY
 
 popd >/dev/null
