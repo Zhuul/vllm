@@ -78,7 +78,7 @@ done
 
 echo "[patches] Post-pass: normalize CUB reductions to device lambdas for CUDA 13"
 python - <<'PY'
-import io, os, re, sys
+import io, os, re
 
 files = []
 for root, _, names in os.walk('csrc'):
@@ -86,23 +86,16 @@ for root, _, names in os.walk('csrc'):
     if n.endswith(('.cu', '.cuh')):
       files.append(os.path.join(root, n))
 
-# Unified pattern: handle both method form and functor form
-pat = re.compile(
-  r"(?P<recv>BlockReduce\([^)]*\))\s*\.\s*"
-  r"(?:"
-  r"Reduce\(\s*(?P<expr>[\s\S]*?)\s*,\s*cub::(?P<op1>Sum|Max|Min)\s*(?:\(\)|\{\})\s*(?P<tail1>,[\s\S]*?)?\)"
-  r"|"
-  r"(?P<method>Sum|Max|Min)\(\s*(?P<mexpr>[\s\S]*?)\s*\)"
-  r")",
-  re.DOTALL,
-)
-
 def lam_for(op: str) -> str:
   if op == 'Sum':
     return '[] __device__ (auto a, auto b) { return a + b; }'
   if op == 'Max':
     return '[] __device__ (auto a, auto b) { return a > b ? a : b; }'
   return '[] __device__ (auto a, auto b) { return a < b ? a : b; }'
+
+# Patterns
+pat_method = re.compile(r'(BlockReduce\([^)]*\))\s*\.\s*(Sum|Max|Min)\(\s*([\s\S]*?)\s*\)', re.DOTALL)
+pat_functor = re.compile(r'(BlockReduce\([^)]*\))\s*\.\s*Reduce\(\s*([\s\S]*?)\s*,\s*cub::(Sum|Max|Min)\s*(?:\(\)|\{\})\s*([\s\S]*?)\)', re.DOTALL)
 
 changed_any = False
 for path in files:
@@ -112,39 +105,19 @@ for path in files:
   except FileNotFoundError:
     continue
 
-  def repl(m):
-    recv = m.group('recv')
-    if m.group('op1'):
-      op = m.group('op1')
-            expr = (m.group('expr') or '').strip()
-            tail = (m.group('tail1') or '').rstrip()
-    else:
-      op = m.group('method')
-            expr = (m.group('mexpr') or '').strip()
-      tail = ''
-    lam = lam_for(op)
-    return f"{recv}.Reduce({expr}, {lam}{tail})"
+  new_src = src
 
-  new_src = pat.sub(repl, src)
+  # Replace method form first
+  def repl_method(m):
+    recv, op, expr = m.group(1), m.group(2), (m.group(3) or '').strip()
+    return f"{recv}.Reduce({expr}, {lam_for(op)})"
+  new_src = pat_method.sub(repl_method, new_src)
 
-  # Extra hardening: explicitly catch method form across line breaks:
-  pat2_max = re.compile(r"(BlockReduce\([^)]*\))\s*\.\s*Max\(\s*([^)]+?)\s*\)", re.DOTALL)
-  pat2_min = re.compile(r"(BlockReduce\([^)]*\))\s*\.\s*Min\(\s*([^)]+?)\s*\)", re.DOTALL)
-  pat2_sum = re.compile(r"(BlockReduce\([^)]*\))\s*\.\s*Sum\(\s*([^)]+?)\s*\)", re.DOTALL)
-
-  def repl2(recv, expr, op):
-    expr = expr.strip()
-    if op == 'Max':
-      lam = '[] __device__ (auto a, auto b) { return a > b ? a : b; }'
-    elif op == 'Min':
-      lam = '[] __device__ (auto a, auto b) { return a < b ? a : b; }'
-    else:
-      lam = '[] __device__ (auto a, auto b) { return a + b; }'
-    return f"{recv}.Reduce({expr}, {lam})"
-
-  new_src = pat2_max.sub(lambda m: repl2(m.group(1), m.group(2), 'Max'), new_src)
-  new_src = pat2_min.sub(lambda m: repl2(m.group(1), m.group(2), 'Min'), new_src)
-  new_src = pat2_sum.sub(lambda m: repl2(m.group(1), m.group(2), 'Sum'), new_src)
+  # Replace functor form
+  def repl_functor(m):
+    recv, expr, op, tail = m.group(1), (m.group(2) or '').strip(), m.group(3), (m.group(4) or '').rstrip()
+    return f"{recv}.Reduce({expr}, {lam_for(op)}{tail})"
+  new_src = pat_functor.sub(repl_functor, new_src)
 
   if new_src != src:
     with io.open(path, 'w', encoding='utf-8', newline='\n') as f:
