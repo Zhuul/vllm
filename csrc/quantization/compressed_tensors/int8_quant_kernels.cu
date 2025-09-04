@@ -173,7 +173,7 @@ __global__ void dynamic_scaled_int8_quant_kernel(
       });
   using BlockReduce = cub::BlockReduce<float, 256>;
   __shared__ typename BlockReduce::TempStorage tmp;
-  float block_max = BlockReduce(tmp).Reduce(thread_max, cub::Max());
+  float block_max = BlockReduce(tmp).Reduce(thread_max, [] __device__ (auto a, auto b) { return a > b ? a : b; });
   __shared__ float absmax;
   if (tid == 0) {
     absmax = block_max;

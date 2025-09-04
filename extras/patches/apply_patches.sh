@@ -76,7 +76,7 @@ PY
   esac
 done
 
-echo "[patches] Post-pass: normalize CUB to Reduce(expr, cub::Op()) across all csrc"
+echo "[patches] Post-pass: normalize CUB reductions to device lambdas for CUDA 13"
 python - <<'PY'
 import io, os, re
 
@@ -86,12 +86,22 @@ for root, _, names in os.walk('csrc'):
     if n.endswith(('.cu', '.cuh')):
       files.append(os.path.join(root, n))
 
-# Patterns:
-# 1) Convert convenience methods to Reduce with functor: BlockReduce(...).Max(expr) -> BlockReduce(...).Reduce(expr, cub::Max())
-pat_method = re.compile(r"(BlockReduce\([^)]*\))\.(?P<op>Sum|Max|Min)\(\s*(?P<expr>[^)]+?)\s*\)")
+# Unified pattern: handle both method form and functor form
+pat = re.compile(
+  r"(?P<recv>BlockReduce\([^)]*\))\."
+  r"(?:"
+  r"Reduce\(\s*(?P<expr>[^,()]+?)\s*,\s*cub::(?P<op1>Sum|Max|Min)\s*(?:\(\)|\{\})\s*(?P<tail1>,[^)]*)?\)"
+  r"|"
+  r"(?P<method>Sum|Max|Min)\(\s*(?P<mexpr>[^)]+?)\s*\)"
+  r")"
+)
 
-# 2) Ensure functor form uses parentheses not braces (cub::Op{} -> cub::Op())
-pat_functor_braces = re.compile(r"(BlockReduce\([^)]*\)\.Reduce\(\s*[^,]+,\s*cub::(Sum|Max|Min))\{\}(\s*(?:,[^)]*)?\))")
+def lam_for(op: str) -> str:
+  if op == 'Sum':
+    return '[] __device__ (auto a, auto b) { return a + b; }'
+  if op == 'Max':
+    return '[] __device__ (auto a, auto b) { return a > b ? a : b; }'
+  return '[] __device__ (auto a, auto b) { return a < b ? a : b; }'
 
 changed_any = False
 for path in files:
@@ -100,20 +110,28 @@ for path in files:
       src = f.read()
   except FileNotFoundError:
     continue
-  # Method -> Reduce(functor)
-  def repl_method(m):
-    receiver = m.group(1)
-    op = m.group('op')
-    expr = m.group('expr').strip()
-    return f"{receiver}.Reduce({expr}, cub::{op}())"
-  new_src = pat_method.sub(repl_method, src)
-  # Braces -> Parens
-  new_src = pat_functor_braces.sub(r"\1()\3", new_src)
+
+  def repl(m):
+    recv = m.group('recv')
+    if m.group('op1'):
+      op = m.group('op1')
+      expr = (m.group('expr') or '').strip()
+      tail = m.group('tail1') or ''
+    else:
+      op = m.group('method')
+      expr = (m.group('mexpr') or '').strip()
+      tail = ''
+    lam = lam_for(op)
+    return f"{recv}.Reduce({expr}, {lam}{tail})"
+
+  new_src = pat.sub(repl, src)
+
   if new_src != src:
     with io.open(path, 'w', encoding='utf-8', newline='\n') as f:
       f.write(new_src)
-    print(f"[patches] Normalized CUB Reduce in {path}")
+    print(f"[patches] Rewrote CUB reductions in {path}")
     changed_any = True
+
 if not changed_any:
   print('[patches] Post-pass: no changes (already applied)')
 PY

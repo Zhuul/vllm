@@ -79,7 +79,7 @@ __launch_bounds__(TPB) __global__
         threadData = max(static_cast<float>(input[idx]), threadData);
     }
 
-    const float maxElem = BlockReduce(tmpStorage).Reduce(threadData, cub::Max());
+    const float maxElem = BlockReduce(tmpStorage).Reduce(threadData, [] __device__ (auto a, auto b) { return a > b ? a : b; });
     if (threadIdx.x == 0)
     {
         float_max = maxElem;

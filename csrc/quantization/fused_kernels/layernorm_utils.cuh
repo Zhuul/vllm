@@ -36,7 +36,7 @@ __device__ void compute_rms(float* rms, scalar_t const* __restrict__ input,
 
   using BlockReduce = cub::BlockReduce<float, 1024>;
   __shared__ typename BlockReduce::TempStorage reduceStore;
-  ss = BlockReduce(reduceStore).Reduce(ss, cub::Sum());
+  ss = BlockReduce(reduceStore).Reduce(ss, [] __device__ (auto a, auto b) { return a + b; });
 
   __shared__ float s_rms;
   if (threadIdx.x == 0) {
@@ -169,7 +169,7 @@ __device__ void compute_rms(float* rms, scalar_t const* __restrict__ input,
 
   using BlockReduce = cub::BlockReduce<float, 1024>;
   __shared__ typename BlockReduce::TempStorage reduceStore;
-  ss = BlockReduce(reduceStore).Reduce(ss, cub::Sum());
+  ss = BlockReduce(reduceStore).Reduce(ss, [] __device__ (auto a, auto b) { return a + b; });
 
   __shared__ float s_rms;
   if (threadIdx.x == 0) {
