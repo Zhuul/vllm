@@ -162,6 +162,42 @@ else:
     print('[patches] No expandable_segments assert to relax (already updated)')
 PY
 
+# Ensure FlashMLA target sees CUDA CCCL/targets include dirs for <cuda/std/...>
+python - <<'PY'
+import io, os, re
+path = os.path.join('cmake','external_projects','flashmla.cmake')
+try:
+  with io.open(path, 'r', encoding='utf-8') as f:
+    src = f.read()
+except FileNotFoundError:
+  print('[patches] flashmla.cmake not found; skipping CCCL include fix')
+else:
+  if 'target_include_directories(_flashmla_C PRIVATE ${CUDAToolkit_INCLUDE_DIRS})' in src:
+    print('[patches] FlashMLA already includes CUDAToolkit include dirs')
+  else:
+    # Insert after the WITH_SOABI) line of define_gpu_extension_target block
+    new_src = re.sub(
+      r"(define_gpu_extension_target\([\s\S]*?_flashmla_C[\s\S]*?WITH_SOABI\))",
+      r"\1\n    if(CUDAToolkit_INCLUDE_DIRS)\n        target_include_directories(_flashmla_C PRIVATE ${CUDAToolkit_INCLUDE_DIRS})\n    endif()",
+      src,
+      count=1,
+    )
+    if new_src != src:
+      with io.open(path, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(new_src)
+      print('[patches] Added CUDAToolkit include dirs to FlashMLA target')
+    else:
+      # Fallback: append near the end before endif()
+      idx = src.rfind('add_custom_target(_flashmla_C)')
+      if idx == -1:
+        appended = src + "\nif(CUDAToolkit_INCLUDE_DIRS)\n    target_include_directories(_flashmla_C PRIVATE ${CUDAToolkit_INCLUDE_DIRS})\nendif()\n"
+      else:
+        appended = src
+      with io.open(path, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(appended)
+      print('[patches] Appended CUDAToolkit include dirs to FlashMLA target (fallback)')
+PY
+
 popd >/dev/null
 
 echo "[patches] Done."

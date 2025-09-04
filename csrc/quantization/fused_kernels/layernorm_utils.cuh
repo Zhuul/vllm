@@ -72,8 +72,7 @@ __device__ void compute_dynamic_per_token_scales(
   using BlockReduce = cub::BlockReduce<float, 1024>;
   __shared__ typename BlockReduce::TempStorage reduceStore;
   block_absmax_val_maybe =
-      BlockReduce(reduceStore)
-          .Max(block_absmax_val_maybe);
+      BlockReduce(reduceStore).Reduce(block_absmax_val_maybe, [] __device__ (auto a, auto b) { return a > b ? a : b; });
 
   __shared__ float s_token_scale;
   if (threadIdx.x == 0) {
@@ -239,8 +238,7 @@ __device__ void compute_dynamic_per_token_scales(
   using BlockReduce = cub::BlockReduce<float, 1024>;
   __shared__ typename BlockReduce::TempStorage reduceStore;
   block_absmax_val_maybe =
-      BlockReduce(reduceStore)
-          .Max(block_absmax_val_maybe);
+      BlockReduce(reduceStore).Reduce(block_absmax_val_maybe, [] __device__ (auto a, auto b) { return a > b ? a : b; });
 
   __shared__ float s_token_scale;
   if (threadIdx.x == 0) {
