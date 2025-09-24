@@ -1,4 +1,5 @@
 #!/usr/bin/env pwsh
+
 [CmdletBinding()] param(
 	[switch]$Build,
 	[switch]$Interactive,
@@ -12,6 +13,7 @@
 	[switch]$Progress,
 	[switch]$NoCache,
 	[switch]$Pull,
+	[string[]]$Env,
 	[switch]$Help
 )
 
@@ -29,6 +31,7 @@ if ($Help) {
 	Write-Host "  -Progress             Show progress bars in setup"
 	Write-Host "  -NoCache              Build image without using cache"
 	Write-Host "  -Pull                 Always attempt to pull newer base image"
+	Write-Host "  -Env KEY=VALUE        Additional environment variable(s) to inject (can repeat)"
 	return
 }
 
@@ -190,6 +193,21 @@ if ($Mirror) { $runArgs += @('--env','LOCAL_MIRROR=1') }
 foreach ($ev in 'NVIDIA_VISIBLE_DEVICES','NVIDIA_DRIVER_CAPABILITIES','NVIDIA_REQUIRE_CUDA') {
 	$val = [Environment]::GetEnvironmentVariable($ev)
 	if ($val) { $runArgs += @('--env',"$ev=$val") }
+}
+
+# Forward any FA3_* host environment variables (e.g., FA3_MEMORY_SAFE_MODE)
+$fa3Vars = Get-ChildItem Env: | Where-Object { $_.Name -like 'FA3_*' }
+foreach ($v in $fa3Vars) { if ($v.Value) { $runArgs += @('--env',"$($v.Name)=$($v.Value)") } }
+
+# User provided generic env KEY=VALUE pairs via -Env
+if ($Env) {
+	foreach ($pair in $Env) {
+		if ($pair -match '^[A-Za-z_][A-Za-z0-9_]*=') {
+			$runArgs += @('--env',$pair)
+		} else {
+			Write-Host "⚠️  Ignoring invalid -Env entry: $pair" -ForegroundColor Yellow
+		}
+	}
 }
 $runArgs += @('--env','ENGINE=podman','--env','NVIDIA_VISIBLE_DEVICES=all','--env','NVIDIA_DRIVER_CAPABILITIES=compute,utility','--env','NVIDIA_REQUIRE_CUDA=')
 
