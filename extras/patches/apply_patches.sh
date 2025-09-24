@@ -198,6 +198,50 @@ else:
       print('[patches] Appended CUDAToolkit include dirs to FlashMLA target (fallback)')
 PY
 
+# Strengthen FlashMLA include path injection: add explicit libcudacxx targets paths if missing
+python - <<'PY'
+import io, os, re
+MARK = '# _flashmla_C_LIBCUDACXX_INJECT'
+path = os.path.join('cmake','external_projects','flashmla.cmake')
+try:
+  with io.open(path, 'r', encoding='utf-8') as f:
+    src = f.read()
+except FileNotFoundError:
+  print('[patches] flashmla.cmake not found; skipping libcudacxx inject')
+else:
+  if MARK in src:
+    print('[patches] FlashMLA libcudacxx include injection already present')
+  else:
+    inject_block = f"""
+{MARK}
+if(CUDAToolkit_ROOT)
+    # Explicit libcudacxx include roots for <cuda/std/...>
+    foreach(_cxx_inc
+        "${{CUDAToolkit_ROOT}}/targets/x86_64-linux/include"
+        "${{CUDAToolkit_ROOT}}/targets/x86_64-linux/include/cccl"
+        "${{CUDAToolkit_ROOT}}/include/cccl"
+      )
+      if(EXISTS "${_cxx_inc}")
+        target_include_directories(_flashmla_C PRIVATE "${_cxx_inc}")
+      endif()
+    endforeach()
+endif()
+""".strip('\n') + '\n'
+
+    # Heuristic: place after first existing target_include_directories for _flashmla_C or after define block
+    pattern = r'(target_include_directories\(_flashmla_C[^\n]*\n)'
+    m = re.search(pattern, src)
+    if m:
+      pos = m.end(1)
+      new_src = src[:pos] + inject_block + src[pos:]
+    else:
+      # Append near end
+      new_src = src + '\n' + inject_block + '\n'
+    with io.open(path, 'w', encoding='utf-8', newline='\n') as f:
+      f.write(new_src)
+    print('[patches] Injected explicit libcudacxx include directories into FlashMLA target')
+PY
+
 popd >/dev/null
 
 echo "[patches] Done."
