@@ -21,6 +21,10 @@ on:
         description: 'Clean previously resolved conflict branches (true/false)'
         required: false
         default: 'true'
+      cleanup_age_days:
+        description: 'Minimum age in days before deleting resolved conflict branches'
+        required: false
+        default: '7'
   push:
     branches:
       - main
@@ -37,6 +41,7 @@ jobs:
       UPSTREAM_REF_INPUT: ${{ github.event.inputs.upstream_ref }}
       AUTO_MERGE_PR: ${{ github.event.inputs.auto_merge_pr }}
       CLEAN_CONFLICT_BRANCHES: ${{ github.event.inputs.clean_conflict_branches }}
+      CLEANUP_AGE_DAYS: ${{ github.event.inputs.cleanup_age_days }}
 
     steps:
       - name: Checkout repository (full history)
@@ -209,27 +214,37 @@ jobs:
             const { data: branches } = await github.rest.repos.listBranches({ owner: context.repo.owner, repo: context.repo.repo, protected: false, per_page: 100 });
             const mainSha = (await github.rest.repos.getBranch({ owner: context.repo.owner, repo: context.repo.repo, branch: process.env.LOCAL_BRANCH })).data.commit.sha;
             const stale = [];
+            const minAgeDays = parseInt(process.env.CLEANUP_AGE_DAYS || '7', 10);
+            const now = Date.now();
             for (const b of branches) {
               if (!b.name.startsWith('merge-conflict-')) continue;
               try {
                 const { data: cmp } = await github.rest.repos.compareCommits({ owner: context.repo.owner, repo: context.repo.repo, base: b.name, head: process.env.LOCAL_BRANCH });
                 // If main contains all commits from conflict branch (status ahead or diverged with total behind=0)
                 if (cmp.status === 'ahead' || (cmp.status === 'diverged' && cmp.behind_by === 0)) {
-                  stale.push(b.name);
+                  // Age gate: get branch head commit date
+                  const headSha = (await github.rest.repos.getBranch({ owner: context.repo.owner, repo: context.repo.repo, branch: b.name })).data.commit.sha;
+                  const commit = await github.rest.repos.getCommit({ owner: context.repo.owner, repo: context.repo.repo, ref: headSha });
+                  const commitDate = new Date(commit.data.commit.committer.date).getTime();
+                  const ageDays = (now - commitDate) / 86400000;
+                  if (ageDays >= minAgeDays) {
+                    stale.push({ name: b.name, age: ageDays.toFixed(1) });
+                  }
                 }
               } catch(e) {
                 core.warning(`Compare failed for branch ${b.name}: ${e}`);
               }
             }
-            for (const name of stale) {
+            for (const info of stale) {
+              const name = info.name || info;
               try {
                 await github.rest.git.deleteRef({ owner: context.repo.owner, repo: context.repo.repo, ref: `heads/${name}` });
-                core.notice(`Deleted stale conflict branch ${name}`);
+                core.notice(`Deleted stale conflict branch ${name} (age ${info.age || 'n/a'} days)`);
               } catch(e) {
                 core.warning(`Failed to delete ${name}: ${e}`);
               }
             }
-            core.notice(`Cleanup complete. Deleted ${stale.length} stale conflict branches.`);
+            core.notice(`Cleanup complete. Deleted ${stale.length} stale conflict branches (age >= ${minAgeDays}d).`);
 
       - name: Log completion summary
         run: |
