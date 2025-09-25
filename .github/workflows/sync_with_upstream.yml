@@ -73,11 +73,11 @@ jobs:
         id: choose_ref
         run: |
           ref="${UPSTREAM_REF_INPUT:-upstream/main}"
-          echo "Remotes:"; git remote -v
-          echo "Remote branches:"; git branch -r
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          {
+            echo "ref=$ref"
+          } >> "$GITHUB_OUTPUT"
           git show-ref --verify --quiet "refs/remotes/${ref#upstream/}" || {
-            echo "Specified upstream ref $ref not found" >&2; exit 1; }
+          echo "Specified upstream ref $ref not found" >&2; exit 1; }
 
       - name: Detect divergence
         id: divergence
