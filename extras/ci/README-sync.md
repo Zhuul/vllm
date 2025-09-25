@@ -1,21 +1,22 @@
 # Upstream Sync Guidance
 
-This fork tracks `vllm-project/vllm` upstream. Automation lives in `.github/workflows/sync_with_upstream.yml` and this `extras/ci` directory gives you manual tooling & templates while keeping fork-specific additions isolated under `extras/`.
+This fork tracks `vllm-project/vllm` upstream. Automation lives in `.github/workflows/sync_with_upstream.yml` and this `extras/ci` directory gives you manual tooling & templates while keeping fork-specific patches isolated.
 
 ## Goals
+
 - Keep `main` reasonably aligned with upstream while preserving fork patches in `extras/`.
 - Prefer **fast-forward** when no local-only commits exist on `main`.
 - Fall back to merge (or optional rebase) when local divergence is present.
 - Surface conflicts early with artifacts & issues.
 
 ## Manual Sync (Local)
+
 ```bash
 # From repo root
 bash extras/ci/sync_upstream.sh            # default upstream main
 bash extras/ci/sync_upstream.sh vllm-project/vllm release-0.6  # different branch
 # Push if satisfied
 git push origin main
-```
 
 ## GitHub Workflow Overview
 Workflow: `.github/workflows/sync_with_upstream.yml`

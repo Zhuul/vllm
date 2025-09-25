@@ -64,7 +64,7 @@ jobs:
           fi
           git remote -v
 
-      - name: Fetch upstream (all tags, prune)
+      - name: Fetch upstream (all tags, prune, heads)
         run: |
           git fetch --tags --prune upstream '+refs/heads/*:refs/remotes/upstream/*'
           echo "Upstream heads:"; git branch -r | grep upstream/ || true
@@ -73,6 +73,8 @@ jobs:
         id: choose_ref
         run: |
           ref="${UPSTREAM_REF_INPUT:-upstream/main}"
+          echo "Remotes:"; git remote -v
+          echo "Remote branches:"; git branch -r
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           git show-ref --verify --quiet "refs/remotes/${ref#upstream/}" || {
             echo "Specified upstream ref $ref not found" >&2; exit 1; }
