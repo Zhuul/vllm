@@ -11,7 +11,7 @@ This fork tracks `vllm-project/vllm` upstream. Automation lives in `.github/work
 
 ## Manual Sync (Local)
 
-```bash
+bash
 # From repo root
 bash extras/ci/sync_upstream.sh            # default upstream main
 bash extras/ci/sync_upstream.sh vllm-project/vllm release-0.6  # different branch
@@ -33,9 +33,8 @@ Features:
 
 ## Recommended Cron Strategy
 Daily is usually sufficient. If upstream is very active and you want smaller conflict windows, use every 6 hours:
-```
+
 0 */6 * * *
-```
 
 ## Protected Branch Considerations
 If `main` is protected against direct pushes, either:
@@ -47,10 +46,10 @@ If `main` is protected against direct pushes, either:
 
 ## Conflict Resolution Flow
 1. Checkout conflict branch announced in issue:
-   ```bash
+bash
    git fetch origin
    git checkout <conflict-branch>
-   ```
+
 2. Inspect artifacts from workflow run for quick context.
 3. Resolve conflicts, continue merge/rebase, push branch, open PR (or fast-forward main if safe).
 
