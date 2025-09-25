@@ -56,9 +56,30 @@ fi
 # Avoid slow git describe during setuptools_scm by providing a pretend version
 export SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION:-0+local}
 
-FETCHCONTENT_BASE_DIR="$TMPDIR/deps" pip install -e . --no-deps --no-build-isolation --verbose
-echo "✅ vLLM installed in editable mode (fallback)!"
+# Always install in editable mode. On some host filesystems (Windows mounts), setuptools may fail on os.utime;
+# inject a sitecustomize shim to ignore PermissionError from utime during the build/copy step.
+SITE_SHIM_DIR="$TMPDIR/pyshim"
+mkdir -p "$SITE_SHIM_DIR"
+cat > "$SITE_SHIM_DIR/sitecustomize.py" <<'PY'
+import os
+_orig_utime = os.utime
+def _safe_utime(*args, **kwargs):
+	try:
+		return _orig_utime(*args, **kwargs)
+	except PermissionError:
+		# Ignore utime failures on certain mounted filesystems (e.g., Windows/WSL/virtiofs)
+		return None
+os.utime = _safe_utime
+PY
+
+echo "📦 Installing vLLM in editable mode..."
+PYTHONPATH="$SITE_SHIM_DIR:${PYTHONPATH:-}" FETCHCONTENT_BASE_DIR="$TMPDIR/deps" \
+  pip install -e . --no-deps --no-build-isolation --verbose --config-settings editable-legacy=true || {
+  echo "❌ Editable install failed. See logs above."; exit 1; }
+echo "✅ vLLM installed in editable mode."
+
 python - <<'PY'
-import vllm
+import os, vllm
 print("vLLM version:", getattr(vllm, "__version__", "unknown"))
+print("FA3_MEMORY_SAFE_MODE:", os.environ.get("FA3_MEMORY_SAFE_MODE"))
 PY

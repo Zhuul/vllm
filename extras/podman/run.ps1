@@ -45,6 +45,18 @@ $SourceDir = (Get-Location).Path
 
 Write-Host "🐋 vLLM Dev Container (Podman)" -ForegroundColor Green
 
+# Normalize CRLF -> LF for mounted shell scripts to avoid /usr/bin/env 'bash\r' errors inside container
+try {
+	$scriptRoot = Join-Path $SourceDir 'extras'
+	$shellScripts = Get-ChildItem -Path $scriptRoot -Recurse -Include *.sh -ErrorAction SilentlyContinue
+	foreach ($f in $shellScripts) {
+		$raw = Get-Content -Raw -Path $f.FullName
+		if ($raw -like "*`r*") {
+			$raw -replace "`r", "" | Set-Content -NoNewline -Encoding UTF8 $f.FullName
+		}
+	}
+} catch { Write-Host "⚠️  Script newline normalization skipped: $($_.Exception.Message)" -ForegroundColor Yellow }
+
 if ($Build) {
 	Write-Host "🔨 Building image (honoring extras/configs/build.env)..." -ForegroundColor Yellow
 	$configPath = Join-Path $SourceDir "extras/configs/build.env"
@@ -264,6 +276,7 @@ rm -f /tmp/gpucheck.py
 	if ($cudaArchs) { $envPrefix += "export CUDAARCHS='$cudaArchs'; " }
 	$envPrefix += 'export TMPDIR=/opt/work/tmp; export TMP=/opt/work/tmp; export TEMP=/opt/work/tmp; mkdir -p /opt/work/tmp; '
 	$setupCmd = $prefix + $envPrefix + '"$TMP_RUN"'
+	# Use bash -lc always; rely on entrypoint normalization only for simple path cases.
 	if ($Progress) { $runArgs += @('-it', $ImageTag, 'bash','-lc', $setupCmd) } else { $runArgs += @($ImageTag, 'bash','-lc', $setupCmd) }
 	Write-Host "🔧 Running dev setup" -ForegroundColor Green
 } elseif ($Interactive -and -not $Command) {

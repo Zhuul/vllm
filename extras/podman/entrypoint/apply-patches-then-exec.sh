@@ -23,4 +23,6 @@ if [[ "${1-}" == "bash" && "${2-}" == "-lc" ]]; then
   fi
 fi
 
+# Preserve any PYTHONPATH/sitecustomize shim passed from caller
+if [[ -n "${PYTHONPATH:-}" ]]; then export PYTHONPATH; fi
 exec "$@"

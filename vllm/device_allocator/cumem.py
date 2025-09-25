@@ -146,13 +146,9 @@ class CuMemAllocator:
         return CuMemAllocator.instance
 
     def __init__(self):
-        conf = os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "")
-        assert "expandable_segments:True" not in conf, \
-            ("Expandable segments are not compatible with memory pool. "
-            "Please track https://github.com/pytorch/pytorch/issues/147851 "
-            "for the latest updates.")
-
-        self.pointer_to_data: dict[int, AllocationData] = {}
+        conf = os.environ.get("PYTORCH_ALLOC_CONF",
+                              os.environ.get("PYTORCH_CUDA_ALLOC_CONF", ""))
+                self.pointer_to_data: dict[int, AllocationData] = {}
         self.current_tag: str = CuMemAllocator.default_tag
         self.allocator_and_pools: dict[str, Any] = {}
         # Creating strong references to the two callbacks here to prevent

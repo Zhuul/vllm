@@ -60,6 +60,9 @@ if(${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER 12.3 AND FLASH_MLA_ARCHS)
         INCLUDE_DIRECTORIES ${FlashMLA_INCLUDES}
         USE_SABI 3
         WITH_SOABI)
+    if(CUDAToolkit_INCLUDE_DIRS)
+        target_include_directories(_flashmla_C PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    endif()
 else()
     # Create an empty target for setup.py when not targeting sm90a systems
     add_custom_target(_flashmla_C)
