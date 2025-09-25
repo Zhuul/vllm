@@ -76,9 +76,9 @@ jobs:
           {
             echo "ref=$ref"
           } >> "$GITHUB_OUTPUT"
-          git show-ref --verify --quiet "refs/remotes/${ref#upstream/}" || {
-          echo "Specified upstream ref $ref not found" >&2; exit 1; }
-
+          git show-ref --verify --quiet "refs/remotes/upstream/${ref#upstream/}" || {
+            echo "Specified upstream ref $ref not found" >&2; exit 1; }
+            
       - name: Detect divergence
         id: divergence
         run: |
