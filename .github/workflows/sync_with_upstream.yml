@@ -53,9 +53,9 @@ jobs:
       - name: Set up Git
         run: |
           git config --global user.name "$GIT_AUTHOR_NAME"
-          git config --global user.email "$GIT_AUTHOR_EMAIL"
-          git config --global pull.rebase false
-          git config --global merge.ff only
+            git config --global user.email "$GIT_AUTHOR_EMAIL"
+            git config --global pull.rebase false
+            git config --global merge.ff only
 
       - name: Add upstream remote (if missing)
         run: |
@@ -78,7 +78,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           git show-ref --verify --quiet "refs/remotes/upstream/${ref#upstream/}" || {
             echo "Specified upstream ref $ref not found" >&2; exit 1; }
-            
+
       - name: Detect divergence
         id: divergence
         run: |
@@ -87,9 +87,11 @@ jobs:
           base=$(git merge-base "$LOCAL_BRANCH" "$upstream_ref")
           ahead_local=$(git rev-list --count "$upstream_ref".."$LOCAL_BRANCH")
           ahead_upstream=$(git rev-list --count "$LOCAL_BRANCH".."$upstream_ref")
-          echo "base_sha=$base" >> "$GITHUB_OUTPUT"
-          echo "ahead_local=$ahead_local" >> "$GITHUB_OUTPUT"
-          echo "ahead_upstream=$ahead_upstream" >> "$GITHUB_OUTPUT"
+          {
+            echo "base_sha=$base"
+            echo "ahead_local=$ahead_local"
+            echo "ahead_upstream=$ahead_upstream"
+          } >> "$GITHUB_OUTPUT"
           echo "Local ahead: $ahead_local / Upstream ahead: $ahead_upstream"
 
       - name: Fast-forward if possible
@@ -131,8 +133,10 @@ jobs:
             git checkout -b "$BRANCH"
             git status --porcelain > conflict-status.txt || true
             git diff > conflict-diff.patch || true
-            echo "conflict=true" >> "$GITHUB_OUTPUT"
-            echo "conflict_branch=$BRANCH" >> "$GITHUB_OUTPUT"
+            {
+              echo "conflict=true"
+              echo "conflict_branch=$BRANCH"
+            } >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check for workflow file changes
@@ -204,7 +208,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: 'Upstream Sync Conflict',
-              body: `A conflict occurred while syncing with upstream (${process.env.UPSTREAM_REPO}).\n\nConflict branch: ${branch}\nArtifacts: see workflow run.\n\nResolve by checking out the branch and completing the merge or rebase.`
+              body: `A conflict occurred while syncing with upstream (${process.env.UPSTREAM_REPO}).\n\nConflict branch: ${branch}\nArtifacts: see workflow run.\n\nResolve by checking out the branch and completing the merge or rebase, then open a PR or fast-forward main.`,
             });
 
       - name: Cleanup previously resolved conflict branches
@@ -222,9 +226,7 @@ jobs:
               if (!b.name.startsWith('merge-conflict-')) continue;
               try {
                 const { data: cmp } = await github.rest.repos.compareCommits({ owner: context.repo.owner, repo: context.repo.repo, base: b.name, head: process.env.LOCAL_BRANCH });
-                // If main contains all commits from conflict branch (status ahead or diverged with total behind=0)
                 if (cmp.status === 'ahead' || (cmp.status === 'diverged' && cmp.behind_by === 0)) {
-                  // Age gate: get branch head commit date
                   const headSha = (await github.rest.repos.getBranch({ owner: context.repo.owner, repo: context.repo.repo, branch: b.name })).data.commit.sha;
                   const commit = await github.rest.repos.getCommit({ owner: context.repo.owner, repo: context.repo.repo, ref: headSha });
                   const commitDate = new Date(commit.data.commit.committer.date).getTime();
@@ -250,7 +252,7 @@ jobs:
 
       - name: Log completion summary
         run: |
-          echo "Sync complete. Strategy input: ${STRATEGY_INPUT:-merge}";
-          echo "Fast-forward performed: ${{ steps.ff.outputs.did_ff || 'false' }}";
-          echo "Conflict: ${{ steps.merge.outputs.conflict || 'false' }}";
-          echo "Upstream ref used: ${{ steps.choose_ref.outputs.ref }}";
+          echo "Sync complete. Strategy input: ${STRATEGY_INPUT:-merge}"
+          echo "Fast-forward performed: ${{ steps.ff.outputs.did_ff || 'false' }}"
+          echo "Conflict: ${{ steps.merge.outputs.conflict || 'false' }}"
+          echo "Upstream ref used: ${{ steps.choose_ref.outputs.ref }}"
