@@ -1,4 +1,4 @@
-# Upstream Sync Guidance
+## Upstream Sync Guidance
 
 This fork tracks `vllm-project/vllm` upstream. Automation lives in `.github/workflows/sync_with_upstream.yml` and this `extras/ci` directory gives you manual tooling & templates while keeping fork-specific patches isolated.
 
@@ -13,12 +13,12 @@ This fork tracks `vllm-project/vllm` upstream. Automation lives in `.github/work
 
 bash
 
-# From repo root
+## From repo root
 
 bash extras/ci/sync_upstream.sh            # default upstream main
 bash extras/ci/sync_upstream.sh vllm-project/vllm release-0.6  # different branch
 
-# Push if satisfied
+## Push if satisfied
 
 git push origin main
 
@@ -41,12 +41,14 @@ Features:
 
 Daily is usually sufficient. If upstream is very active and you want smaller conflict windows, use every 6 hours:
 
-0 */6 * * *
+'0 */6 * * *'
 
 ## Protected Branch Considerations
 
 If `main` is protected against direct pushes, either:
+
 1. Allow GitHub Actions bot to bypass (Branch protection setting), or
+
 2. Always create PRs even for non-workflow syncs (modify push step condition to open PR unconditionally).
 
 ## Rebase Mode Caveat
@@ -56,7 +58,9 @@ If `main` is protected against direct pushes, either:
 ## Conflict Resolution Flow
 
 1. Checkout conflict branch announced in issue:
+
 bash
+
    git fetch origin
    git checkout <conflict-branch>
 
@@ -77,7 +81,9 @@ Add a job-level conditional or an additional input (`dry_run: true`) and replace
 ## Future Enhancements (Optional)
 
 - Auto-label sync PRs (add a `labels:` field in the PR step).
+
 - Slack / Teams notification on conflict (add webhook action).
+
 - Auto-close stale conflict branches after resolution.
 
 
