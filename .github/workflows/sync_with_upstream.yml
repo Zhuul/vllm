@@ -69,9 +69,6 @@ jobs:
           git fetch --tags --prune upstream '+refs/heads/*:refs/remotes/upstream/*'
           echo "Upstream heads:"; git branch -r | grep upstream/ || true
  
-      - name: Fetch upstream branches
-        run: git fetch upstream
-        
       - name: Choose upstream ref
         id: choose_ref
         run: |
