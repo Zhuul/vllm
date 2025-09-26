@@ -166,7 +166,7 @@ nvidia-smi || true
 		if ($Progress) { $envs += @('PROGRESS_WATCH=1') }
 		$envs += @('NVIDIA_VISIBLE_DEVICES=all')
 		$envStr = ($envs | ForEach-Object { "export $_;" }) -join ' '
-		$cmd = "$envStr apply-vllm-patches || true; chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh"
+		$cmd = "$envStr (command -v apply-vllm-patches >/dev/null 2>&1 && apply-vllm-patches || bash extras/patches/apply_patches.sh) || true; chmod +x ./extras/dev-setup.sh 2>/dev/null || true; ./extras/dev-setup.sh"
 		if ($Progress) { podman exec -it $ContainerName bash -lc $cmd } else { podman exec $ContainerName bash -lc $cmd }
 		exit $LASTEXITCODE
 	}
@@ -267,7 +267,7 @@ rm -f /tmp/gpucheck.py
 } elseif ($Setup) {
 	# Use robust setup entrypoint that finds the right script (extras/dev-setup.sh or image helper)
 	# Avoid in-place edits on Windows-mounted files; run a CRLF-normalized temp copy instead
-	$prefix = 'TMP_RUN=$(mktemp /tmp/run-dev-setup.XXXX.sh); tr -d "\r" < ./extras/podman/dev-setup.sh > "$TMP_RUN" || cp ./extras/podman/dev-setup.sh "$TMP_RUN"; chmod +x "$TMP_RUN" 2>/dev/null || true; apply-vllm-patches || true; '
+	$prefix = 'TMP_RUN=$(mktemp /tmp/run-dev-setup.XXXX.sh); tr -d "\r" < ./extras/podman/dev-setup.sh > "$TMP_RUN" || cp ./extras/podman/dev-setup.sh "$TMP_RUN"; chmod +x "$TMP_RUN" 2>/dev/null || true; (command -v apply-vllm-patches >/dev/null 2>&1 && apply-vllm-patches || bash extras/patches/apply_patches.sh) || true; '
 	$envPrefix = ''
 	if ($Mirror) { $envPrefix += 'export LOCAL_MIRROR=1; ' }
 	if ($Progress) { $envPrefix += 'export PROGRESS_WATCH=1; ' }
