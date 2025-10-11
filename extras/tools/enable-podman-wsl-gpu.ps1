@@ -30,7 +30,7 @@ param(
     [string]$MachineName = "podman-machine-default",
     [switch]$SkipReboot,
     [switch]$Reset,
-    [string]$ImagePath = "https://dl.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-Container-UBI.latest.x86_64.tar.xz",
+    [string]$ImagePath = "https://dl.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-WSL-Base.latest.x86_64.wsl",
     [switch]$ConvertImage,
     [string]$CacheRoot,
 
@@ -143,9 +143,18 @@ function Convert-RockyImage {
         throw "Unable to resolve image reference '$ImageSpec'."
     }
 
-    if ($resolved.EndsWith('.tar',[StringComparison]::OrdinalIgnoreCase)) {
+    # Check if already a tar archive (including .wsl which is a tar format)
+    if ($resolved.EndsWith('.tar',[StringComparison]::OrdinalIgnoreCase) -or 
+        $resolved.EndsWith('.wsl',[StringComparison]::OrdinalIgnoreCase)) {
         Write-Host "ℹ️  Resolved image already a tar archive: $resolved" -ForegroundColor DarkGray
         return $resolved
+    }
+
+    # Handle compressed tar archives (.tar.xz, .tar.gz)
+    if ($resolved.EndsWith('.tar.xz',[StringComparison]::OrdinalIgnoreCase) -or 
+        $resolved.EndsWith('.tar.gz',[StringComparison]::OrdinalIgnoreCase)) {
+        Write-Host "ℹ️  Image is compressed; will import directly to WSL for preparation." -ForegroundColor DarkGray
+        # Fall through to conversion logic below
     }
 
     if ($resolved.EndsWith('.vhdx',[StringComparison]::OrdinalIgnoreCase)) {
