@@ -426,7 +426,7 @@ class MRotaryEmbedding(RotaryEmbedding):
     ) -> tuple[torch.Tensor, int]:
         from vllm.transformers_utils.config import thinker_uses_mrope
 
-        if thinker_uses_mrope(hf_config):
+        if thinker_uses_mrope(hf_config) and hf_config.model_type == "qwen2_5_omni":
             return cls._omni_get_input_positions_tensor(
                 input_tokens=input_tokens,
                 hf_config=hf_config,
@@ -971,17 +971,9 @@ class MRotaryEmbedding(RotaryEmbedding):
             llm_pos_ids_list.append(
                 torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx
             )
-
             t_index = (
-                (
-                    torch.arange(llm_grid_t)
-                    .view(-1, 1)
-                    .expand(-1, llm_grid_h * llm_grid_w)
-                )
-                .long()
-                .flatten()
-            )
-
+                torch.arange(llm_grid_t).view(-1, 1).expand(-1, llm_grid_h * llm_grid_w)
+            ).flatten()
             h_index = (
                 torch.arange(llm_grid_h)
                 .view(1, -1, 1)
@@ -1042,7 +1034,6 @@ class MRotaryEmbedding(RotaryEmbedding):
 
         st = 0
         remain_images, remain_videos = image_nums, video_nums
-
         image_index, video_index = 0, 0
         for _ in range(image_nums + video_nums):
             video_second_per_grid_t = 0.0
@@ -1093,19 +1084,11 @@ class MRotaryEmbedding(RotaryEmbedding):
             llm_pos_ids_list.append(
                 torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx
             )
-
             t_index = (
-                (
-                    torch.arange(llm_grid_t)
-                    .view(-1, 1)
-                    .expand(-1, llm_grid_h * llm_grid_w)
-                    * video_second_per_grid_t
-                    * tokens_per_second
-                )
-                .long()
-                .flatten()
-            )
-
+                torch.arange(llm_grid_t).view(-1, 1).expand(-1, llm_grid_h * llm_grid_w)
+                * video_second_per_grid_t
+                * tokens_per_second
+            ).flatten()
             h_index = (
                 torch.arange(llm_grid_h)
                 .view(1, -1, 1)
@@ -1167,8 +1150,13 @@ class MRotaryEmbedding(RotaryEmbedding):
 
         # TODO(fyabc): refactor and share more code with
         #  _vl_get_input_positions_tensor.
-
         thinker_config = hf_config.thinker_config
+
+        if isinstance(image_grid_thw, list):
+            image_grid_thw = torch.tensor(image_grid_thw)
+        if isinstance(video_grid_thw, list):
+            video_grid_thw = torch.tensor(video_grid_thw)
+
         audio_token_id = thinker_config.audio_token_index
         image_token_id = thinker_config.image_token_index
         video_token_id = thinker_config.video_token_index
@@ -1181,11 +1169,6 @@ class MRotaryEmbedding(RotaryEmbedding):
         tokens_per_second = getattr(
             thinker_config.vision_config, "tokens_per_second", 25
         )
-
-        if isinstance(image_grid_thw, list):
-            image_grid_thw = torch.tensor(image_grid_thw)
-        if isinstance(video_grid_thw, list):
-            video_grid_thw = torch.tensor(video_grid_thw)
 
         src_item = input_tokens
         audio_seqlens = audio_feature_lengths
@@ -1232,7 +1215,7 @@ class MRotaryEmbedding(RotaryEmbedding):
                 grid_t = image_grid_thw[image_idx][0]
                 grid_hs = image_grid_thw[:, 1]
                 grid_ws = image_grid_thw[:, 2]
-                t_index = (torch.arange(grid_t) * 1 * tokens_per_second).long()
+                t_index = torch.arange(grid_t) * 1 * tokens_per_second
                 llm_pos_ids = cls._get_llm_pos_ids_for_vision(
                     start_idx, image_idx, spatial_merge_size, t_index, grid_hs, grid_ws
                 )
@@ -1250,7 +1233,7 @@ class MRotaryEmbedding(RotaryEmbedding):
                     torch.arange(grid_t)
                     * second_per_grid_ts[video_idx]
                     * tokens_per_second
-                ).long()
+                )
                 llm_pos_ids = cls._get_llm_pos_ids_for_vision(
                     start_idx, video_idx, spatial_merge_size, t_index, grid_hs, grid_ws
                 )
@@ -1277,7 +1260,7 @@ class MRotaryEmbedding(RotaryEmbedding):
                     torch.arange(grid_t)
                     * second_per_grid_ts[video_idx]
                     * tokens_per_second
-                ).long()
+                )
                 t_index_split_chunk = cls._split_list_into_ranges(
                     t_index, t_ntoken_per_chunk
                 )
@@ -1452,9 +1435,7 @@ class MRotaryEmbedding(RotaryEmbedding):
         grid_h = video_grid_thw[1]
         grid_w = video_grid_thw[2]
         t_ntoken_per_chunk = int(tokens_per_second * seconds_per_chunk)
-        t_index = (
-            torch.arange(grid_t) * video_second_per_grid_t * tokens_per_second
-        ).long()
+        t_index = torch.arange(grid_t) * video_second_per_grid_t * tokens_per_second
         t_index_split_chunk = cls._split_list_into_ranges(t_index, t_ntoken_per_chunk)
 
         updates = [audio_start_token_id]
