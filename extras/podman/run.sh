@@ -391,6 +391,8 @@ prepare_run_args() {
 		true
 	elif [[ -d /usr/lib/wsl ]]; then
 		RUN_ARGS+=(-v /usr/lib/wsl:/usr/lib/wsl:ro)
+		# Add WSL-specific CUDA library paths at runtime
+		RUN_ARGS+=(-e "LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/lib/wsl/drivers:/usr/lib/wsl/lib:\$LD_LIBRARY_PATH")
 		if [[ -e /dev/dxg ]]; then
 			RUN_ARGS+=(--device /dev/dxg)
 		else

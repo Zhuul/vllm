@@ -226,98 +226,24 @@ fi
 # Avoid slow git describe during setuptools_scm by providing a pretend version
 export SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION:-0+local}
 
-# Always install in editable mode. On some host filesystems (Windows mounts), setuptools may fail on os.utime;
-# inject a sitecustomize shim to ignore PermissionError from utime during the build/copy step.
-SITE_SHIM_DIR="$TMPDIR/pyshim"
-mkdir -p "$SITE_SHIM_DIR"
-cat > "$SITE_SHIM_DIR/sitecustomize.py" <<'PY'
-"""sitecustomize: make editable install resilient on restrictive mounts.
-Silently ignore PermissionError from utime/chmod and copy_file metadata ops.
-NO FALLBACK: If editable still fails, build stops (user requested strict mode).
-"""
-import errno
-import os
-import shutil
-import stat
-import sys
+# Avoid slow git describe during setuptools_scm by providing a pretend version
+export SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION:-0+local}
 
-_orig_utime = os.utime
-_orig_chmod = os.chmod
-def _safe_utime(*a, **k):
-	try:
-		return _orig_utime(*a, **k)
-	except PermissionError:
-		return None
-def _safe_chmod(*a, **k):
-	try:
-		return _orig_chmod(*a, **k)
-	except PermissionError:
-		return None
-os.utime = _safe_utime  # type: ignore
-os.chmod = _safe_chmod  # type: ignore
+echo "📦 Installing vLLM in editable mode..."
+# Use --no-use-pep517 and proper environment variables to handle filesystem restrictions
+# This avoids the need for dangerous monkey patching of core Python modules
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+export SETUPTOOLS_USE_DISTUTILS=stdlib
 
-def _ensure_writable(path: str) -> None:
-	try:
-		os.chmod(path, stat.S_IWUSR | stat.S_IRUSR | stat.S_IWGRP | stat.S_IRGRP | stat.S_IROTH)
-	except FileNotFoundError:
-		return
-	except PermissionError:
-		return
-
-
-def _patch_copy_file(module):
-	if not module:
-		return
-	cf = getattr(module, 'copy_file', None)
-	if not cf:
-		return
-	def _wrapped(src, dst, *a, **k):
-		try:
-			return cf(src, dst, *a, **k)
-		except PermissionError:
-			# Fallback: try to make destination writable or replace it atomically.
-			_ensure_writable(dst)
-			try:
-				os.remove(dst)
-			except FileNotFoundError:
-				pass
-			except PermissionError:
-				_ensure_writable(dst)
-				try:
-					os.remove(dst)
-				except Exception:
-					pass
-			tmp_dst = f"{dst}.tmp-copy"
-			shutil.copyfile(src, tmp_dst)
-			try:
-				os.replace(tmp_dst, dst)
-			except PermissionError:
-				_ensure_writable(dst)
-				os.replace(tmp_dst, dst)
-			except OSError as exc:
-				if exc.errno == errno.EXDEV:
-					shutil.move(tmp_dst, dst)
-				else:
-					raise
-			return (dst, 1)
-	module.copy_file = _wrapped
-
-for _mod_name in ('distutils.file_util', 'setuptools._distutils.file_util'):  # both paths
-	try:
-		import importlib
-		_m = importlib.import_module(_mod_name)
-		_patch_copy_file(_m)
-	except Exception:
-		pass
-
-if '/workspace' not in sys.path:
-	sys.path.insert(0, '/workspace')
-PY
-
-echo "📦 Installing vLLM in strict editable mode (no fallback)..."
-PYTHONPATH="$SITE_SHIM_DIR:${PYTHONPATH:-}" FETCHCONTENT_BASE_DIR="$TMPDIR/deps" \
-	pip install -e . --no-deps --no-build-isolation --verbose --config-settings editable-legacy=true || {
-		echo "❌ Editable install failed (strict mode)."; exit 1; }
+# Try editable install with conservative options for cross-platform compatibility
+FETCHCONTENT_BASE_DIR="$TMPDIR/deps" \
+	pip install -e . --no-deps --no-build-isolation --verbose \
+	--config-settings editable-legacy=true \
+	--config-settings build-dir="$TMPDIR/vllm-build" || {
+		echo "❌ Editable install failed. This may be due to filesystem restrictions."
+		echo "💡 For WSL/Windows mounts, consider using bind mounts with proper options."
+		exit 1
+	}
 echo "✅ vLLM installed in editable mode."
 
 publish_python_overlays

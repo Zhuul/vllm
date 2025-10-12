@@ -37,9 +37,9 @@ RUN dnf update -y && dnf install --allowerasing -y \
 ## Ensure /usr/bin/python exists for compatibility
 RUN ln -sf $(command -v python3) /usr/bin/python || true
 
-# Create a non-root user for development
+# Create a non-root user for development with limited sudo access
 RUN useradd -m -s /bin/bash vllmuser && \
-    echo "vllmuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+    echo "vllmuser ALL=(ALL) NOPASSWD: /usr/bin/dnf, /usr/bin/yum, /bin/chmod, /bin/chown, /usr/bin/systemctl" >> /etc/sudoers
 
 # Install essential system tools
 RUN dnf install -y hostname iproute iputils
@@ -128,13 +128,13 @@ RUN chown -R vllmuser:vllmuser /workspace
 
 # Create build directories with proper permissions
 RUN mkdir -p /workspace/.deps && chown -R vllmuser:vllmuser /workspace/.deps && \
-    mkdir -p /tmp/vllm-build && chmod 777 /tmp/vllm-build && \
-    mkdir -p /opt/work && chmod 777 /opt/work && \
+    mkdir -p /tmp/vllm-build && chmod 755 /tmp/vllm-build && chown vllmuser:vllmuser /tmp/vllm-build && \
+    mkdir -p /opt/work && chmod 755 /opt/work && chown vllmuser:vllmuser /opt/work && \
     mkdir -p /home/vllmuser/.cache && chown -R vllmuser:vllmuser /home/vllmuser/.cache && \
     mkdir -p /home/vllmuser/.ccache && chown -R vllmuser:vllmuser /home/vllmuser/.ccache && \
     mkdir -p /home/vllmuser/.cmake && chown -R vllmuser:vllmuser /home/vllmuser/.cmake && \
     chmod -R 755 /workspace && \
-    chmod -R 777 /tmp
+    chmod 1777 /tmp
 
 # Switch to the non-root user
 USER vllmuser
@@ -280,10 +280,10 @@ ENV PATH=/usr/lib64/ccache:$PATH
 # Do not force-disable Machete; allow upstream defaults. User may still pass -e CMAKE_ARGS for custom CMake settings.
 ENV CMAKE_ARGS=""
 
-# WSL2-specific CUDA environment configuration
+# NVIDIA GPU support (base paths - WSL paths set at runtime)
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
-ENV LD_LIBRARY_PATH=/usr/local/cuda/compat:/usr/lib/wsl/drivers:/usr/lib/wsl/lib:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:/usr/local/cuda/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 
 # Add runtime library detection script
 RUN echo '#!/bin/bash' > /home/vllmuser/check_cuda_libs.sh && \
