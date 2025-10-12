@@ -85,6 +85,13 @@ nvidia-container-toolkit package resolution issues) but the final GPU test shoul
 - Systemd not active after restart
   - `wsl --terminate <name>` and open a new shell to re-enter the distro; check `/etc/wsl.conf`
 
+**🚨 CRITICAL: Sparse VHD Errors (WSL Import Issues)**:
+If you get "Sparse VHD support is currently disabled" errors, **run as Administrator**:
+```powershell
+Start-Process pwsh -ArgumentList "-NoExit", "-Command", "Set-Location 'C:\sources\github\vllm'; pwsh extras/tools/enable-podman-wsl-gpu.ps1 -Reset -ImagePath 'C:\ProgramData\vllm\podman-images\Rocky-10-WSL-Base.latest.x86_64.wsl'" -Verb RunAs
+```
+This allows the script to convert the Rocky WSL image and handle sparse VHD operations.
+
 **Container/Build Issues**:
 - "Image missing. Use --build." 
   - Run `extras/podman/run.ps1 --build` to build the dev container first
