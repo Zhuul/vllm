@@ -31,13 +31,13 @@ It complements the detailed Patch Workflow doc in `extras/docs/patch-workflow.md
 1) Provision the Rocky 10 WSL distro and enable GPU + Podman
 
 ```powershell
-pwsh extras/tools/enable-podman-wsl-gpu.ps1 -MachineName podman-machine-default -CacheRoot C:\vllm-cache
+pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -CacheRoot C:\podman-images
 ```
 
 2) (Optional) Create a Windows podman remote context that targets the WSL podman socket over SSH
 
 ```powershell
-pwsh extras/tools/enable-podman-wsl-gpu.ps1 -MachineName podman-machine-default -CreatePodmanContext -PodmanContextName wsl-podman-default -SkipReboot
+pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -CreatePodmanContext -PodmanContextName wsl-podman-default -SkipReboot
 podman context use wsl-podman-default
 podman info
 ```
@@ -88,9 +88,21 @@ nvidia-container-toolkit package resolution issues) but the final GPU test shoul
 **🚨 CRITICAL: Sparse VHD Errors (WSL Import Issues)**:
 If you get "Sparse VHD support is currently disabled" errors, **run as Administrator**:
 ```powershell
-Start-Process pwsh -ArgumentList "-NoExit", "-Command", "Set-Location 'C:\sources\github\vllm'; pwsh extras/tools/enable-podman-wsl-gpu.ps1 -Reset -ImagePath 'C:\ProgramData\vllm\podman-images\Rocky-10-WSL-Base.latest.x86_64.wsl'" -Verb RunAs
+Start-Process pwsh -ArgumentList "-NoExit", "-Command", "Set-Location 'C:\sources\github\vllm'; pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -Reset -ImagePath 'C:\ProgramData\podman-images\Rocky-10-WSL-Base.latest.x86_64.wsl'" -Verb RunAs
 ```
-This allows the script to convert the Rocky WSL image and handle sparse VHD operations.
+This allows the script to convert the Rocky WSL image or toggle sparse support as needed.
+
+**Compressed image errors (unexpected EOF)**:
+- Cause: A corrupted/incomplete cached download of the Rocky UBI archive
+- Fixes:
+  1) Re-run the helper; it now auto-detects and clears the bad cache and retries once
+  2) Manually delete the cache: `C:\ProgramData\podman-images\Rocky-10-Container-UBI.latest.x86_64.tar.xz`
+  3) As fallback, run elevated and use `-ConvertImage` or a `.wsl`/prepared `.tar` via `-ImagePath`
+
+Example elevated one-liner if needed:
+```powershell
+Start-Process pwsh -ArgumentList "-NoExit", "-Command", "Set-Location 'C:\sources\github\vllm'; pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -Reset -ConvertImage -ImagePath 'https://dl.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-Container-UBI.latest.x86_64.tar.xz'" -Verb RunAs
+```
 
 **Container/Build Issues**:
 - "Image missing. Use --build." 
@@ -159,7 +171,7 @@ The complete development cycle with patch management:
 podman system connection rm wsl-podman-default -f
 
 # Unregister the WSL distro
-pwsh extras/tools/enable-podman-wsl-gpu.ps1 -MachineName podman-machine-default -Reset
+pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -Reset
 ```
 
 ---
@@ -176,7 +188,7 @@ pwsh extras/tools/enable-podman-wsl-gpu.ps1 -MachineName podman-machine-default 
 **Full cycle from scratch**:
 ```powershell
 # 1. Provision WSL2 + GPU
-pwsh extras/tools/enable-podman-wsl-gpu.ps1 -MachineName podman-machine-default -CacheRoot C:\vllm-cache
+pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -CacheRoot C:\podman-images
 
 # 2. Sync upstream (if needed)  
 pwsh extras/tools/fork-sync/sync_with_upstream.ps1
@@ -191,7 +203,7 @@ extras/podman/run.ps1 -Interactive
 **Reset everything**:
 ```powershell
 # Remove WSL distro
-pwsh extras/tools/enable-podman-wsl-gpu.ps1 -MachineName podman-machine-default -Reset
+pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -Reset
 
 # Remove Windows podman context (if created)
 podman system connection rm wsl-podman-default -f

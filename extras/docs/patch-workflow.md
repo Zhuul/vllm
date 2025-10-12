@@ -72,12 +72,13 @@ and keeps the Windows-mounted repository free of unexpected modifications.
 1. From the repository root, run the helper script:
 
   ```powershell
-  pwsh extras/tools/enable-podman-wsl-gpu.ps1
+  pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1
   ```
 
-   Add `-MachineName <name>` if you use a non-default Podman machine or `-SkipReboot` when you prefer
+  Add `-MachineName <name>` if you use a non-default Podman machine or `-SkipReboot` when you prefer
   to restart it manually later. Use `-ImagePath <file-or-url>` to override the default image; HTTP(S) URLs are
-  downloaded into `%LOCALAPPDATA%\vllm-podman-images` on first use. Pass `-Rootful` to enable rootful
+  downloaded into `%LOCALAPPDATA%\podman-images` on first use or into the directory specified by the
+  `PODMAN_IMAGE_CACHE` environment variable. Pass `-Rootful` to enable rootful
   mode automatically. Add `-Reset` to wipe and reinitialize the Podman machine (the helper removes the
   existing VM and re-runs `podman machine init`) when you want to start from a clean slate. If WSL stops
   the import with "Sparse VHD support is currently disabled", rerun the helper with `-AllowSparseUnsafe` to

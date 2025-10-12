@@ -18,7 +18,7 @@
     Optional override for the Podman guest image. Defaults to the Rocky Linux 10 WSL Base archive.
 
 .EXAMPLE
-    pwsh extras/tools/enable-podman-wsl-gpu.ps1
+    pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1
 
 .NOTES
     Requires Podman 4.6+ with `podman machine` support and an NVIDIA driver on Windows that
@@ -94,9 +94,53 @@ function Test-PodmanMachine {
     return $false
 }
 
+function Assert-SafeMachineName {
+    # SAFETY: Only allow operations on podman-machine-default to prevent accidental damage
+    if ($MachineName -ne "podman-machine-default") {
+        throw "SAFETY CHECK FAILED: This script only operates on 'podman-machine-default'. Current target: '$MachineName'. Use -MachineName 'podman-machine-default' explicitly if intended."
+    }
+}
+
 function Confirm-PodmanCli {
     if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
         throw "Podman CLI not found. Install Podman Desktop or Podman for Windows first."
+    }
+}
+
+function Invoke-ElevatedImagePreparation {
+    param(
+        [string]$Reason = "",
+        [switch]$UseConvertImage
+    )
+
+    if (Test-IsAdministrator) {
+        return $false
+    }
+
+    $scriptPath = $PSCommandPath
+    if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+    $cwdEsc = (Get-Location).Path.Replace("'","''")
+    $scriptEsc = $scriptPath.Replace("'","''")
+    $imageEsc = if ($ImagePath) { $ImagePath.Replace("'","''") } else { $null }
+
+    # Build the -Command string cleanly without invalid escape sequences
+    $cmd = "Set-Location '$cwdEsc'; pwsh '$scriptEsc' -MachineName '" + $MachineName.Replace("'","''") + "'"
+    if ($UseConvertImage) { $cmd += " -ConvertImage" }
+    if ($ImagePath) { $cmd += " -ImagePath '" + $imageEsc + "'" }
+    if ($CacheRoot) { $cmd += " -CacheRoot '" + $CacheRoot.Replace("'","''") + "'" }
+    if ($Rootful.IsPresent) { $cmd += " -Rootful" }
+    if ($AllowSparseUnsafe.IsPresent) { $cmd += " -AllowSparseUnsafe" }
+
+    Write-Host "🔐 Elevation required to prepare/import the machine image. Launching an Administrator PowerShell..." -ForegroundColor Yellow
+    if ($Reason) { Write-Host ("   Reason: {0}" -f $Reason) -ForegroundColor DarkGray }
+
+    $startArgs = @('-NoExit','-Command', $cmd)
+    try {
+        Start-Process pwsh -ArgumentList $startArgs -Verb RunAs -Wait | Out-Null
+        return $true
+    } catch {
+        Write-Warning "Failed to launch elevated PowerShell. Please rerun from an 'Administrator: PowerShell' session."
+        return $false
     }
 }
 
@@ -105,19 +149,20 @@ function Get-PodmanImageCacheRoot {
 
     $candidates = @()
     if ($OverrideRoot) { $candidates += $OverrideRoot }
-    if ($env:VLLM_PODMAN_IMAGE_CACHE) { $candidates += $env:VLLM_PODMAN_IMAGE_CACHE }
+    # Prefer generic env var
+    if ($env:PODMAN_IMAGE_CACHE) { $candidates += $env:PODMAN_IMAGE_CACHE }
 
     $commonData = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
     if ($commonData) {
-        $candidates += (Join-Path $commonData 'vllm\podman-images')
+        $candidates += (Join-Path $commonData 'podman-images')
     }
 
     $localData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
     if ($localData) {
-        $candidates += (Join-Path $localData 'vllm-podman-images')
+        $candidates += (Join-Path $localData 'podman-images')
     }
 
-    $candidates += (Join-Path ([IO.Path]::GetTempPath()) 'vllm-podman-images')
+    $candidates += (Join-Path ([IO.Path]::GetTempPath()) 'podman-images')
 
     foreach ($candidate in $candidates) {
         if (-not $candidate) { continue }
@@ -132,7 +177,7 @@ function Get-PodmanImageCacheRoot {
         }
     }
 
-    throw "Unable to determine a writable cache location. Provide -CacheRoot or set VLLM_PODMAN_IMAGE_CACHE."
+    throw "Unable to determine a writable cache location. Provide -CacheRoot or set PODMAN_IMAGE_CACHE."
 }
 
 function Convert-RockyImage {
@@ -141,6 +186,28 @@ function Convert-RockyImage {
     $resolved = Resolve-ImagePath -ImageSpec $ImageSpec
     if (-not $resolved) {
         throw "Unable to resolve image reference '$ImageSpec'."
+    }
+
+    # If the source is a .tar.xz, decompress and repackage to a plain .tar for WSL import
+    if ($resolved.EndsWith('.tar.xz',[StringComparison]::OrdinalIgnoreCase)) {
+        $plainTar = [IO.Path]::ChangeExtension($resolved,'tar')
+        if (-not (Test-Path $plainTar)) {
+            Write-Host "🗜️  Converting compressed archive to plain tar for WSL import..." -ForegroundColor DarkGray
+            $xzWork = Join-Path ([IO.Path]::GetTempPath()) ("podman-xz-" + [Guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $xzWork | Out-Null
+            try {
+                $extractArgs = "-xf `"$resolved`" -C `"$xzWork`""
+                $p1 = Start-Process -FilePath tar.exe -ArgumentList $extractArgs -NoNewWindow -PassThru -Wait
+                if ($p1.ExitCode -ne 0) { throw "tar extraction failed with exit code $($p1.ExitCode)" }
+                $createArgs = "-cf `"$plainTar`" -C `"$xzWork`" ."
+                $p2 = Start-Process -FilePath tar.exe -ArgumentList $createArgs -NoNewWindow -PassThru -Wait
+                if ($p2.ExitCode -ne 0) { throw "tar creation failed with exit code $($p2.ExitCode)" }
+            } finally {
+                Remove-Item $xzWork -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            Write-Host "✅ Created plain tar '$plainTar' for import." -ForegroundColor Green
+        }
+        $resolved = $plainTar
     }
 
     if ($resolved.EndsWith('.tar',[StringComparison]::OrdinalIgnoreCase)) {
@@ -161,15 +228,21 @@ function Convert-RockyImage {
 
     Assert-Administrator
 
-    $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("vllm-wsl-" + [Guid]::NewGuid().ToString('N'))
-    $tempDistro = "vllm-temp-" + [Guid]::NewGuid().ToString('N')
+    $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("podman-wsl-" + [Guid]::NewGuid().ToString('N'))
+    $tempDistro = "podman-temp-" + [Guid]::NewGuid().ToString('N')
     New-Item -ItemType Directory -Path $tempRoot | Out-Null
     try {
+        # Attempt to enable sparse VHD for the temp distro to allow import if gated
+        try {
+            Enable-SparseVhdSupport -Distribution $tempDistro
+        } catch {
+            Write-Host "ℹ️  Could not pre-enable sparse VHD on temp distro (may not exist yet); proceeding with import." -ForegroundColor DarkGray
+        }
+
         Write-Host "⬇️  Importing Rocky archive into temporary WSL distro '$tempDistro' for conversion..." -ForegroundColor DarkGray
-        & wsl.exe @('--import',$tempDistro,$tempRoot,$resolved,'--version','2') | Out-Null
-        $importExit = $LASTEXITCODE
-        if ($importExit -ne 0) {
-            throw "wsl.exe import failed with exit code $importExit"
+        $importProc = Start-Process -FilePath wsl.exe -ArgumentList ("--import `"$tempDistro`" `"$tempRoot`" `"$resolved`" --version 2") -NoNewWindow -PassThru -Wait
+        if ($importProc.ExitCode -ne 0) {
+            throw "wsl.exe import failed with exit code $($importProc.ExitCode)"
         }
 
         try {
@@ -192,24 +265,26 @@ fi
 '@
             $prepScript = $prepScript -replace "`r", ""
             $prepEncoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($prepScript))
-            & wsl.exe @('-d',$tempDistro,'--user','root','bash','-lc',"echo $prepEncoded | base64 -d | bash") | Out-Null
+            $cmd = "echo $prepEncoded | base64 -d | bash"
+            $pPrep = Start-Process -FilePath wsl.exe -ArgumentList ("-d `"$tempDistro`" --user root bash -lc `"$cmd`"") -NoNewWindow -PassThru -Wait
+            if ($pPrep.ExitCode -ne 0) { Write-Host "ℹ️  Preparation inside temp distro exited with code $($pPrep.ExitCode); continuing." -ForegroundColor DarkGray }
         } catch {
             Write-Host "ℹ️  Could not pre-create /etc/containers in temp distro; continuing." -ForegroundColor DarkGray
         }
 
-        & wsl.exe @('--terminate',$tempDistro) | Out-Null
-        & wsl.exe @('--shutdown') | Out-Null
+    Start-Process -FilePath wsl.exe -ArgumentList ("--terminate `"$tempDistro`"") -NoNewWindow -Wait | Out-Null
+    Start-Process -FilePath wsl.exe -ArgumentList "--shutdown" -NoNewWindow -Wait | Out-Null
 
-        Write-Host "�️  Exporting prepared distro to tar archive..." -ForegroundColor Yellow
-        & wsl.exe @('--export',$tempDistro,$preparedArchive) | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "wsl.exe export failed with exit code $LASTEXITCODE"
+    Write-Host "Exporting prepared distro to tar archive..." -ForegroundColor Yellow
+        $exportProc = Start-Process -FilePath wsl.exe -ArgumentList ("--export `"$tempDistro`" `"$preparedArchive`"") -NoNewWindow -PassThru -Wait
+        if ($exportProc.ExitCode -ne 0) {
+            throw "wsl.exe export failed with exit code $($exportProc.ExitCode)"
         }
 
         Write-Host "✅ Prepared archive ready at '$preparedArchive'." -ForegroundColor Green
         return $preparedArchive
     } finally {
-        try { & wsl.exe @('--unregister',$tempDistro) | Out-Null } catch {}
+        try { Start-Process -FilePath wsl.exe -ArgumentList ("--unregister `"$tempDistro`"") -NoNewWindow -PassThru -Wait | Out-Null } catch {}
         Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
@@ -302,17 +377,48 @@ function Initialize-PodmanMachine {
     $convertedImage = $null
     $attemptedConversion = $false
 
+    # Helper to clear cached image and re-resolve
+    function Clear-And-RedownloadImage([string]$currentResolved) {
+        try {
+            if ($currentResolved -and (Test-Path $currentResolved)) {
+                Write-Host "🧹 Removing cached machine image '$currentResolved' due to extraction error..." -ForegroundColor Yellow
+                Remove-Item -Force -ErrorAction SilentlyContinue $currentResolved
+                $prepared = [IO.Path]::ChangeExtension($currentResolved,'prepared.tar')
+                if (Test-Path $prepared) { Remove-Item -Force -ErrorAction SilentlyContinue $prepared }
+                $fixed = [IO.Path]::ChangeExtension($currentResolved,'fixed.vhdx')
+                if (Test-Path $fixed) { Remove-Item -Force -ErrorAction SilentlyContinue $fixed }
+            }
+        } catch {}
+        return (Resolve-ImagePath -ImageSpec $ImagePath)
+    }
+
+    # If init failed with compressed file extraction errors, clear cache and retry once
+    if ($exitCode -ne 0 -and ($sparseMessage -match 'unexpected EOF')) {
+        Write-Host "⚠️  Detected a corrupted or incomplete cached image (unexpected EOF). Will clear cache and retry once." -ForegroundColor Yellow
+        $resolvedImage = Clear-And-RedownloadImage -currentResolved $resolvedImage
+        $initArgs = @('machine','init')
+        if ($resolvedImage) { $initArgs += @('--image',$resolvedImage) }
+        $initArgs += $MachineName
+        $output = & podman @initArgs 2>&1
+        $exitCode = $LASTEXITCODE
+        $sparseMessage = ($output | Out-String)
+    }
+
     if ($exitCode -ne 0 -and $sparseMessage -match 'Sparse VHD support is currently disabled') {
-    Write-Host "⚠️  Podman init blocked by WSL sparse-vhd gate; preparing a reusable archive..." -ForegroundColor Yellow
+        Write-Host "⚠️  Podman init blocked by WSL sparse-vhd gate; preparing a reusable archive..." -ForegroundColor Yellow
+        $convertedImage = $null
         try {
             $convertedImage = Convert-RockyImage -ImageSpec $ImagePath
         } catch {
-            if ($_.Exception.Message -match 'Convert-VHD requires elevation') {
-                Write-Warning $_.Exception.Message
-                $convertedImage = $null
-            } else {
-                throw
+            $msg = ($_.Exception.Message | Out-String)
+            if ($msg -match 'elevated PowerShell session' -or $msg -match 'Convert-VHD requires elevation') {
+                $launched = Invoke-ElevatedImagePreparation -Reason "WSL sparse-vhd gate: image preparation requires elevation" -UseConvertImage
+                if ($launched) {
+                    Write-Host "Launched elevated session to prepare image; exiting current (non-admin) session..." -ForegroundColor Yellow
+                    exit 0
+                }
             }
+            throw
         }
         $attemptedConversion = $true
         if ($convertedImage) {
@@ -330,17 +436,43 @@ function Initialize-PodmanMachine {
                 throw
             }
         }
+    } elseif ($exitCode -ne 0 -and ($sparseMessage -match 'unexpected EOF')) {
+        # As an additional fallback, try conversion if extraction kept failing
+        try {
+            $convertedImage = Convert-RockyImage -ImageSpec $ImagePath
+            if ($convertedImage) {
+                $resolvedImage = $convertedImage
+                $initArgs = @('machine','init','--image',$resolvedImage,$MachineName)
+                $output = & podman @initArgs 2>&1
+                $exitCode = $LASTEXITCODE
+            }
+        } catch {
+            $msg = ($_.Exception.Message | Out-String)
+            if ($msg -match 'elevated PowerShell session' -or $msg -match 'Convert-VHD requires elevation') {
+                $launched = Invoke-ElevatedImagePreparation -Reason "Corrupted image (unexpected EOF): image preparation requires elevation" -UseConvertImage
+                if ($launched) {
+                    Write-Host "Launched elevated session to prepare image; exiting current (non-admin) session..." -ForegroundColor Yellow
+                    exit 0
+                }
+            }
+            throw
+        }
+        $attemptedConversion = $true
     } elseif ($exitCode -ne 0 -and $AllowSparseUnsafe.IsPresent -and $sparseMessage -match 'allow-unsafe') {
     Write-Host "⚠️  WSL rejected '--allow-unsafe'; preparing a reusable archive instead." -ForegroundColor Yellow
         $convertedImage = $null
         try {
         $convertedImage = Convert-RockyImage -ImageSpec $ImagePath
         } catch {
-            if ($_.Exception.Message -match 'Convert-VHD requires elevation') {
-                Write-Warning $_.Exception.Message
-            } else {
-                throw
+            $msg = ($_.Exception.Message | Out-String)
+            if ($msg -match 'elevated PowerShell session' -or $msg -match 'Convert-VHD requires elevation') {
+                $launched = Invoke-ElevatedImagePreparation -Reason "WSL rejected allow-unsafe: image preparation requires elevation" -UseConvertImage
+                if ($launched) {
+                    Write-Host "Launched elevated session to prepare image; exiting current (non-admin) session..." -ForegroundColor Yellow
+                    exit 0
+                }
             }
+            throw
         }
         $attemptedConversion = $true
         if ($convertedImage) {
@@ -354,7 +486,10 @@ function Initialize-PodmanMachine {
         $message = ($output | Out-String).Trim()
         if (-not $message) { $message = "podman machine init exited with code $exitCode" }
         if ($attemptedConversion -and -not $convertedImage) {
-            $message += "`nArchive preparation failed; run 'extras/tools/enable-podman-wsl-gpu.ps1 -ConvertImage' from elevated PowerShell first."
+            $message += "`nArchive preparation failed; run 'extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -ConvertImage' from elevated PowerShell first."
+        }
+    if ($sparseMessage -match 'unexpected EOF') {
+            $message += "`nDetected a corrupted image download; the script attempted a cache clear and retry. You can also delete the cached file and rerun: C:\\ProgramData\\podman-images\\Rocky-10-Container-UBI.latest.x86_64.tar.xz"
         }
         throw "Failed to initialize Podman machine '$MachineName': $message"
     }
@@ -417,11 +552,19 @@ function Reset-PodmanMachine {
     if (-not $Reset.IsPresent) {
         return
     }
+    
+    # SAFETY: Verify we're only targeting the expected machine
+    Assert-SafeMachineName
+    
     Write-Host "♻️ Resetting Podman machine '$MachineName'..." -ForegroundColor Yellow
     if (Test-PodmanMachine) {
         try {
+            Write-Host "   Stopping machine '$MachineName'..." -ForegroundColor DarkGray
             Invoke-Podman @('machine','stop',$MachineName) | Out-Null
-        } catch {}
+        } catch {
+            Write-Host "   Machine '$MachineName' was already stopped." -ForegroundColor DarkGray
+        }
+        Write-Host "   Removing machine '$MachineName'..." -ForegroundColor DarkGray
         Invoke-Podman @('machine','rm','-f',$MachineName) | Out-Null
     } else {
         Write-Host "ℹ️  Machine '$MachineName' already absent." -ForegroundColor DarkGray
@@ -457,11 +600,26 @@ function Get-OsRelease {
     return $map
 }
 
-function Install-NvidiaToolkit {
+function Install-PodmanAndToolkit {
     $remoteScript = @'
 #!/usr/bin/env bash
 set -euo pipefail
 
+# First, ensure Podman is installed inside the WSL machine
+if ! command -v podman >/dev/null 2>&1; then
+    echo "Installing Podman inside WSL machine..."
+    sudo dnf install -y podman
+fi
+
+# Create user socket directory and start Podman system service
+mkdir -p /run/user/$(id -u)/podman
+if ! pgrep -f "podman system service" >/dev/null 2>&1; then
+    echo "Starting Podman system service..."
+    podman system service --time=0 unix:///run/user/$(id -u)/podman/podman.sock &
+    sleep 2
+fi
+
+# Set up NVIDIA container toolkit
 REPO_FILE="/etc/yum.repos.d/nvidia-container-toolkit.repo"
 ARCH="$(uname -m)"
 . /etc/os-release
@@ -540,6 +698,25 @@ exit 0
     Invoke-Podman $sshArgs | Out-Null
 }
 
+function Remove-OrphanedConnections {
+    Write-Host "🧹 Cleaning up orphaned Podman connections..." -ForegroundColor DarkGray
+    
+    # SAFETY: Only remove connections specifically related to our target machine
+    try {
+        $connections = & podman system connection list --format json 2>$null | ConvertFrom-Json
+        foreach ($conn in $connections) {
+            # Only target connections that match our specific machine name pattern
+            if ($conn.Name -eq $MachineName -or $conn.Name -eq "$MachineName-root") {
+                Write-Host "   Removing connection '$($conn.Name)' for machine '$MachineName'..." -ForegroundColor DarkGray
+                & podman system connection remove $conn.Name 2>$null | Out-Null
+            }
+        }
+    } catch {
+        # Ignore errors during cleanup
+        Write-Host "   Connection cleanup completed (some connections may not have existed)." -ForegroundColor DarkGray
+    }
+}
+
 function Test-PodmanGpu {
     Write-Host "🔍 Checking GPU devices inside the machine..." -ForegroundColor Yellow
     $cmd = 'bash -lc "ls -l /dev/dxg 2>/dev/null; ls -l /dev/nvidia* 2>/dev/null; nvidia-smi || true"'
@@ -550,7 +727,16 @@ $script:PodmanImageCacheRoot = Get-PodmanImageCacheRoot -OverrideRoot $CacheRoot
 
 Confirm-PodmanCli
 
+# SAFETY: Ensure we only operate on the expected machine name
+Assert-SafeMachineName
+
 if ($ConvertImage) {
+    if (-not (Test-IsAdministrator)) {
+        if (Invoke-ElevatedImagePreparation -Reason "Manual -ConvertImage requested" -UseConvertImage) {
+            Write-Host "Launched elevated session to prepare image; exiting current (non-admin) session..." -ForegroundColor Yellow
+            exit 0
+        }
+    }
     Assert-Administrator
     $convertedPath = Convert-RockyImage -ImageSpec $ImagePath
     if ($convertedPath) {
@@ -559,18 +745,22 @@ if ($ConvertImage) {
     return
 }
 
+Write-Host "🎯 Target: Configuring Podman machine '$MachineName' only" -ForegroundColor Cyan
+Write-Host "🛡️  Safety: This script will not affect other machines, images, or containers" -ForegroundColor Green
+
 Reset-PodmanMachine
 Initialize-PodmanMachine
 Set-PodmanRootfulMode
 Start-MachineIfNeeded
+Remove-OrphanedConnections
 $osInfo = Get-OsRelease
 $machineId = if ($osInfo.ContainsKey('ID') -and $osInfo['ID']) { $osInfo['ID'] } elseif ($osInfo.ContainsKey('ID_LIKE') -and $osInfo['ID_LIKE']) { $osInfo['ID_LIKE'] } elseif ($osInfo.ContainsKey('PRETTY_NAME') -and $osInfo['PRETTY_NAME']) { $osInfo['PRETTY_NAME'] } else { 'unknown' }
 if ($machineId -notlike 'rocky*') {
     Write-Warning ("Machine reports ID='{0}'. Script was validated against Rocky Linux 10; adjust steps manually if your image differs." -f $machineId)
 }
 
-Write-Host "⚙️  Installing NVIDIA container runtime bits inside '$MachineName'..." -ForegroundColor Cyan
-Install-NvidiaToolkit
+Write-Host "⚙️  Installing Podman and NVIDIA container runtime inside '$MachineName'..." -ForegroundColor Cyan
+Install-PodmanAndToolkit
 
 if (-not $SkipReboot.IsPresent) {
     Write-Host "🔄 Restarting machine to finalize toolkit installation..." -ForegroundColor Cyan
