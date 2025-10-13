@@ -154,6 +154,16 @@ The complete development cycle with patch management:
    ```powershell
    pwsh extras/tools/fork-sync/sync_with_upstream.ps1
    ```
+   
+   **Fork Sync Tooling Details**:
+   - **Purpose**: Safely merge upstream `vllm-project/vllm` changes while preserving fork-specific customizations
+   - **Protected Paths**: Automatically backs up and restores `extras/` directory and `.github/workflows/fork-sync.yml`
+   - **Process**: Fetches upstream, attempts fast-forward merge, falls back to regular merge if needed
+   - **Safety**: Validates clean working tree, handles in-progress merges/rebases, restores protected content
+   - **Windows Support**: `sync_with_upstream.ps1` wrapper locates Git Bash and executes the shell script
+   - **Customization**: Override protected paths via `PROTECTED_PATHS="path1 path2"` environment variable
+   - **Usage**: Run from repository root, accepts optional remote/branch parameters
+   - **Post-sync**: Automatically commits restored protected paths and suggests push command
 
 2. **Build container with pre-build patches**:
    ```powershell
@@ -287,6 +297,68 @@ podman system connection rm wsl-podman-default -f
 # Unregister the WSL distro
 pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -Reset
 ```
+
+---
+
+## Fork Sync Tooling (`extras/tools/fork-sync/`)
+
+**Critical Infrastructure**: These scripts maintain alignment with upstream `vllm-project/vllm` while preserving our fork-specific customizations.
+
+### Scripts Overview
+
+- **`sync_with_upstream.ps1`**: PowerShell wrapper for Windows environments
+  - Locates Git Bash installation automatically
+  - Converts Windows paths to MSYS format for bash execution
+  - Passes through all parameters to the shell script
+  
+- **`sync_with_upstream.sh`**: Core bash script that performs the sync operation
+  - Fetches from upstream remote (default: `upstream/main`)
+  - Backs up protected paths before merge
+  - Attempts fast-forward merge, falls back to regular merge
+  - Restores protected content and commits changes
+  - Ensures `.gitignore` includes `extras/secrets/*.env`
+
+### Protected Paths (Default)
+
+- `extras/` - All fork-specific tooling, patches, configurations
+- `.github/workflows/fork-sync.yml` - Fork-specific GitHub Actions workflow
+
+### Usage Patterns
+
+```powershell
+# Standard sync (most common)
+pwsh extras/tools/fork-sync/sync_with_upstream.ps1
+
+# Sync from different remote/branch
+pwsh extras/tools/fork-sync/sync_with_upstream.ps1 upstream dev
+
+# Custom protected paths
+$env:PROTECTED_PATHS = "extras custom-dir"; pwsh extras/tools/fork-sync/sync_with_upstream.ps1
+```
+
+### Safety Features
+
+- **Pre-flight checks**: Validates git repository, clean working tree, no in-progress operations
+- **Backup/restore**: Creates temporary backup of protected paths before merge
+- **Automatic fallback**: If fast-forward fails, attempts regular merge with --no-edit
+- **Post-sync validation**: Commits restored paths, suggests push command
+- **Error handling**: Exits cleanly on conflicts, preserves working state
+
+### When to Use
+
+- **After upstream releases**: Sync latest vLLM changes before development
+- **Before major work**: Ensure fork is current to minimize future conflicts  
+- **Conflict resolution**: When manual git operations create divergence
+- **Regular maintenance**: Periodic sync to stay aligned with upstream
+
+### Troubleshooting
+
+- **Merge conflicts**: Resolve manually, then re-run script to restore protected paths
+- **Missing upstream remote**: Add with `git remote add upstream https://github.com/vllm-project/vllm.git`
+- **Permission issues**: Ensure Git Bash is accessible, run PowerShell as needed
+- **Path conflicts**: Check `PROTECTED_PATHS` environment variable or script defaults
+
+**⚠️ Always use this tooling instead of manual `git pull upstream/main`** - it prevents accidental loss of fork customizations.
 
 ---
 
