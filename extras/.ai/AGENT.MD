@@ -263,7 +263,22 @@ podman system connection rm wsl-podman-default -f
     - Fetch metadata by DOI:
       "Use tool get_medrxiv_metadata with { \"doi\": \"10.1101/2025.09.25.25336313\" }"
 
+  - **Local Python Package Installation** (Recommended for long-term):
+    - Install directly via pip: `C:/Users/arman/scoop/apps/python/3.14.0/python.exe -m pip install paper-search-mcp`
+    - Add stdio configuration to `mcp.json`:
+      ```json
+      "paper-search-mcp": {
+        "type": "stdio",
+        "command": "C:/Users/arman/scoop/apps/python/3.14.0/python.exe",
+        "args": ["-m", "paper_search_mcp.server"],
+        "env": {"SEMANTIC_SCHOLAR_API_KEY": ""}
+      }
+      ```
+    - Available tools: search_arxiv, search_pubmed, search_biorxiv, search_medrxiv, search_google_scholar, download_arxiv, etc.
+    - Test with: "Use tool search_arxiv with { \"query\": \"machine learning\", \"max_results\": 5 }"
+
   - Notes:
+    - **Python package approach preferred** over Smithery hosted servers due to OAuth/authentication issues
     - Some MCP clients require each tool to have a description to auto-invoke. If not present, manual invocation (as above) works.
     - Keep install keys/tokens private; do not commit them.
     - If deep-link install (one-click) fails, use the CLI route above.
