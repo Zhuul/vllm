@@ -28,11 +28,11 @@
 [CmdletBinding()]
 param(
     [string]$MachineName = "podman-machine-default",
-    [switch]$SkipReboot,
+    [string]$ImagePath = 'https://dl.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-WSL-Base.latest.x86_64.wsl',
     [switch]$Reset,
-    [string]$ImagePath = "https://dl.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-Container-UBI.latest.x86_64.tar.xz",
     [switch]$ConvertImage,
     [string]$CacheRoot,
+    [switch]$ClearCache,
 
     [switch]$Rootful,
     [switch]$AllowSparseUnsafe
@@ -42,6 +42,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $script:PodmanImageCacheRoot = $null
+$script:ElevatedLaunchDone = $false
 
 function Wait-FileUnlocked {
     param(
@@ -117,6 +118,11 @@ function Invoke-ElevatedImagePreparation {
         return $false
     }
 
+    if ($script:ElevatedLaunchDone) { 
+        Write-Host "ℹ️  Elevation already attempted in this session; skipping duplicate request." -ForegroundColor DarkGray
+        return $false 
+    }
+
     $scriptPath = $PSCommandPath
     if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
     $cwdEsc = (Get-Location).Path.Replace("'","''")
@@ -136,6 +142,7 @@ function Invoke-ElevatedImagePreparation {
 
     $startArgs = @('-NoExit','-Command', $cmd)
     try {
+        $script:ElevatedLaunchDone = $true
         Start-Process pwsh -ArgumentList $startArgs -Verb RunAs -Wait | Out-Null
         return $true
     } catch {
@@ -188,9 +195,53 @@ function Convert-RockyImage {
         throw "Unable to resolve image reference '$ImageSpec'."
     }
 
+    # Avoid recursive re-preparation
+    if ($resolved.EndsWith('.prepared.tar',[StringComparison]::OrdinalIgnoreCase)) {
+        Write-Host "ℹ️  Resolved image is already a prepared WSL archive: $resolved" -ForegroundColor DarkGray
+        return $resolved
+    }
+
+    # Preferred path: If source is a .wsl (installable WSL image), install it, export to tar without launching (to avoid OOBE), and unregister
+    if ($resolved.EndsWith('.wsl',[StringComparison]::OrdinalIgnoreCase)) {
+        Assert-Administrator
+        $preparedArchive = [IO.Path]::ChangeExtension($resolved,'prepared.tar')
+        if (Test-Path $preparedArchive) {
+            if (Test-PreparedArchive -TarPath $preparedArchive) {
+                Write-Host "ℹ️  Reusing prepared archive '$preparedArchive'." -ForegroundColor DarkGray
+                return $preparedArchive
+            } else {
+                Write-Host "🧹 Detected incomplete prepared archive. Removing '$preparedArchive' to rebuild..." -ForegroundColor Yellow
+                try { Remove-Item -Force $preparedArchive } catch {}
+            }
+        }
+
+        $tempDistro = "podman-temp-" + [Guid]::NewGuid().ToString('N')
+        Write-Host "⬇️  Installing Rocky .wsl image as temporary WSL distro '$tempDistro'..." -ForegroundColor DarkGray
+        $installArgs = @('--install','--from-file',"$resolved",'--name',"$tempDistro")
+        $pInstall = Start-Process -FilePath wsl.exe -ArgumentList ($installArgs -join ' ') -NoNewWindow -PassThru -Wait
+        # OOBE may cause non-zero exit; proceed if the distro is registered
+        $registered = & wsl.exe -l -q 2>$null | Where-Object { $_ -eq $tempDistro }
+        if (-not $registered) {
+            throw "wsl.exe install failed (distro '$tempDistro' not registered). Exit code: $($pInstall.ExitCode)"
+        }
+        # Immediately terminate to avoid OOBE user prompt blocking subsequent steps
+        try { Start-Process -FilePath wsl.exe -ArgumentList ("--terminate `"$tempDistro`"") -NoNewWindow -PassThru -Wait | Out-Null } catch {}
+        # Ensure WSL2 (this does not launch the distro)
+        try { Start-Process -FilePath wsl.exe -ArgumentList ("--set-version `"$tempDistro`" 2") -NoNewWindow -PassThru -Wait | Out-Null } catch {}
+
+        Write-Host "Exporting prepared distro to tar archive..." -ForegroundColor Yellow
+        $exportProc = Start-Process -FilePath wsl.exe -ArgumentList ("--export `"$tempDistro`" `"$preparedArchive`"") -NoNewWindow -PassThru -Wait
+        if ($exportProc.ExitCode -ne 0) {
+            throw "wsl.exe export failed with exit code $($exportProc.ExitCode)"
+        }
+        try { Start-Process -FilePath wsl.exe -ArgumentList ("--unregister `"$tempDistro`"") -NoNewWindow -PassThru -Wait | Out-Null } catch {}
+        Write-Host "✅ Prepared archive ready at '$preparedArchive'." -ForegroundColor Green
+        return $preparedArchive
+    }
+
     # If the source is a .tar.xz, decompress and repackage to a plain .tar for WSL import
     if ($resolved.EndsWith('.tar.xz',[StringComparison]::OrdinalIgnoreCase)) {
-        $plainTar = [IO.Path]::ChangeExtension($resolved,'tar')
+        $plainTar = $resolved -replace '\.tar\.xz$', '.tar'
         if (-not (Test-Path $plainTar)) {
             Write-Host "🗜️  Converting compressed archive to plain tar for WSL import..." -ForegroundColor DarkGray
             $xzWork = Join-Path ([IO.Path]::GetTempPath()) ("podman-xz-" + [Guid]::NewGuid().ToString('N'))
@@ -211,8 +262,7 @@ function Convert-RockyImage {
     }
 
     if ($resolved.EndsWith('.tar',[StringComparison]::OrdinalIgnoreCase)) {
-        Write-Host "ℹ️  Resolved image already a tar archive: $resolved" -ForegroundColor DarkGray
-        return $resolved
+        Write-Host "ℹ️  Resolved image is a tar; will prepare a WSL-compatible archive." -ForegroundColor DarkGray
     }
 
     if ($resolved.EndsWith('.vhdx',[StringComparison]::OrdinalIgnoreCase)) {
@@ -222,8 +272,13 @@ function Convert-RockyImage {
 
     $preparedArchive = [IO.Path]::ChangeExtension($resolved,'prepared.tar')
     if (Test-Path $preparedArchive) {
-        Write-Host "ℹ️  Reusing prepared archive '$preparedArchive'." -ForegroundColor DarkGray
-        return $preparedArchive
+        if (Test-PreparedArchive -TarPath $preparedArchive) {
+            Write-Host "ℹ️  Reusing prepared archive '$preparedArchive'." -ForegroundColor DarkGray
+            return $preparedArchive
+        } else {
+            Write-Host "🧹 Detected incomplete prepared archive. Removing '$preparedArchive' to rebuild..." -ForegroundColor Yellow
+            try { Remove-Item -Force $preparedArchive } catch {}
+        }
     }
 
     Assert-Administrator
@@ -272,10 +327,10 @@ fi
             Write-Host "ℹ️  Could not pre-create /etc/containers in temp distro; continuing." -ForegroundColor DarkGray
         }
 
-    Start-Process -FilePath wsl.exe -ArgumentList ("--terminate `"$tempDistro`"") -NoNewWindow -Wait | Out-Null
-    Start-Process -FilePath wsl.exe -ArgumentList "--shutdown" -NoNewWindow -Wait | Out-Null
+        Start-Process -FilePath wsl.exe -ArgumentList ("--terminate `"$tempDistro`"") -NoNewWindow -Wait | Out-Null
+        Start-Process -FilePath wsl.exe -ArgumentList "--shutdown" -NoNewWindow -Wait | Out-Null
 
-    Write-Host "Exporting prepared distro to tar archive..." -ForegroundColor Yellow
+        Write-Host "Exporting prepared distro to tar archive..." -ForegroundColor Yellow
         $exportProc = Start-Process -FilePath wsl.exe -ArgumentList ("--export `"$tempDistro`" `"$preparedArchive`"") -NoNewWindow -PassThru -Wait
         if ($exportProc.ExitCode -ne 0) {
             throw "wsl.exe export failed with exit code $($exportProc.ExitCode)"
@@ -287,6 +342,34 @@ fi
         try { Start-Process -FilePath wsl.exe -ArgumentList ("--unregister `"$tempDistro`"") -NoNewWindow -PassThru -Wait | Out-Null } catch {}
         Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Test-PreparedArchive {
+    param([Parameter(Mandatory=$true)][string]$TarPath)
+    try {
+        # List entries in the tar and verify expected OS markers exist.
+        # We accept two tiers:
+        #  1) Strong markers: etc/containers and etc/ssh present (preferred)
+        #  2) Minimal OS marker: etc/os-release (or usr/lib/os-release) present (sufficient)
+        $list = & tar.exe -tf $TarPath 2>$null
+        if (-not $list) { return $false }
+
+        # Normalize entries to avoid leading ./ and support potential 'rootfs/' prefix
+        $norm = $list | ForEach-Object { $_ -replace '^\./', '' }
+
+        $hasContainers = $norm | Where-Object { $_ -match '^(?:rootfs/)?etc/containers/?$' -or $_ -match '^(?:rootfs/)?etc/containers/containers\.conf$' }
+        $hasSsh = $norm | Where-Object { $_ -match '^(?:rootfs/)?etc/ssh/?$' -or $_ -match '^(?:rootfs/)?etc/ssh/sshd_config$' }
+        if ($hasContainers -and $hasSsh) { return $true }
+
+        # Minimal Rocky/EL rootfs marker
+        $hasOsRelease = $norm | Where-Object { $_ -match '^(?:rootfs/)?etc/os-release$' -or $_ -match '^(?:rootfs/)?usr/lib/os-release$' }
+        if ($hasOsRelease) {
+            Write-Host "ℹ️  Prepared archive validated via minimal OS marker (os-release present)." -ForegroundColor DarkGray
+            return $true
+        }
+
+        return $false
+    } catch { return $false }
 }
 
 function Resolve-ImagePath {
@@ -306,6 +389,16 @@ function Resolve-ImagePath {
             $leaf = 'podman-machine-image.qcow2'
         }
         $localPath = Join-Path $cacheRoot $leaf
+        if ($leaf -match '(?i)container|ubi') {
+            Write-Warning "The specified image appears to be a container archive. Prefer the official Rocky .wsl image when possible for WSL installs. See docs: https://docs.rockylinux.org/10/guides/interoperability/import_rocky_to_wsl/"
+        }
+        if ($ClearCache.IsPresent -and (Test-Path $localPath)) {
+            Write-Host "🧹 Clearing cached image at '$localPath' (-ClearCache specified)..." -ForegroundColor Yellow
+            try { Remove-Item -Force $localPath } catch {}
+            $prepared = [IO.Path]::ChangeExtension($localPath,'prepared.tar'); if (Test-Path $prepared) { try { Remove-Item -Force $prepared } catch {} }
+            $legacyPrepared = [IO.Path]::ChangeExtension($localPath,'prepared.vhdx'); if (Test-Path $legacyPrepared) { try { Remove-Item -Force $legacyPrepared } catch {} }
+            $fixed = [IO.Path]::ChangeExtension($localPath,'fixed.vhdx'); if (Test-Path $fixed) { try { Remove-Item -Force $fixed } catch {} }
+        }
         if (-not (Test-Path $localPath)) {
             Write-Host "⬇️  Downloading Podman machine image from '$ImageSpec'..." -ForegroundColor Cyan
             try {
@@ -319,8 +412,13 @@ function Resolve-ImagePath {
         }
         $preparedCandidate = [IO.Path]::ChangeExtension($localPath,'prepared.tar')
         if (Test-Path $preparedCandidate) {
-            Write-Host "ℹ️  Using prepared machine image '$preparedCandidate'." -ForegroundColor DarkGray
-            return $preparedCandidate
+            if (Test-PreparedArchive -TarPath $preparedCandidate) {
+                Write-Host "ℹ️  Using prepared machine image '$preparedCandidate'." -ForegroundColor DarkGray
+                return $preparedCandidate
+            } else {
+                Write-Host "🧹 Detected incomplete prepared archive. Removing '$preparedCandidate' to rebuild..." -ForegroundColor Yellow
+                try { Remove-Item -Force $preparedCandidate } catch {}
+            }
         }
         $legacyPrepared = [IO.Path]::ChangeExtension($localPath,'prepared.vhdx')
         if (Test-Path $legacyPrepared) {
@@ -342,8 +440,13 @@ function Resolve-ImagePath {
     if ($resolved.EndsWith('.wsl',[StringComparison]::OrdinalIgnoreCase) -or $resolved.EndsWith('.tar',[StringComparison]::OrdinalIgnoreCase)) {
         $preparedCandidate = [IO.Path]::ChangeExtension($resolved,'prepared.tar')
         if (Test-Path $preparedCandidate) {
-            Write-Host "ℹ️  Using prepared machine image '$preparedCandidate'." -ForegroundColor DarkGray
-            return $preparedCandidate
+            if (Test-PreparedArchive -TarPath $preparedCandidate) {
+                Write-Host "ℹ️  Using prepared machine image '$preparedCandidate'." -ForegroundColor DarkGray
+                return $preparedCandidate
+            } else {
+                Write-Host "🧹 Detected incomplete prepared archive. Removing '$preparedCandidate' to rebuild..." -ForegroundColor Yellow
+                try { Remove-Item -Force $preparedCandidate } catch {}
+            }
         }
         $legacyPrepared = [IO.Path]::ChangeExtension($resolved,'prepared.vhdx')
         if (Test-Path $legacyPrepared) {
@@ -489,7 +592,7 @@ function Initialize-PodmanMachine {
             $message += "`nArchive preparation failed; run 'extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -ConvertImage' from elevated PowerShell first."
         }
     if ($sparseMessage -match 'unexpected EOF') {
-            $message += "`nDetected a corrupted image download; the script attempted a cache clear and retry. You can also delete the cached file and rerun: C:\\ProgramData\\podman-images\\Rocky-10-Container-UBI.latest.x86_64.tar.xz"
+            $message += "`nDetected a corrupted image download; try clearing the cache or re-downloading (use -ClearCache). Current cache root: C:\\ProgramData\\podman-images\\"
         }
         throw "Failed to initialize Podman machine '$MachineName': $message"
     }

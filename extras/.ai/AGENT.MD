@@ -169,6 +169,38 @@ The complete development cycle with patch management:
 ```powershell
 # Remove the Windows podman context (optional)
 podman system connection rm wsl-podman-default -f
+  ---
+
+  ## Unresolved issues (2025-10-13)
+
+  Context from latest runs (Admin PS + VS Code terminal):
+
+  - OOBE prompt still appears during `wsl --install` of the Rocky `.wsl` base, but our new flow avoids launching the distro for config and proceeds to export. Admin run shows successful export to prepared tar: `C:\ProgramData\podman-images\Rocky-10-WSL-Base.latest.x86_64.prepared.tar`.
+  - In VS Code, the script keeps deleting the prepared tar as “incomplete” and relaunches elevation. This loop prevents `podman machine init` from progressing.
+  - `podman machine list` is empty, confirming init never completes.
+
+  Likely root causes:
+
+  1) Overly strict `Test-PreparedArchive` validation. The exported Rocky `.wsl` may not contain our expected `/etc/containers` or `/etc/ssh` markers because we intentionally avoid launching the distro (to bypass OOBE), so the pre-creation step was skipped. The archive is still valid for Podman import, but our validator flags it as incomplete and deletes it.
+  2) Loop between “prepared tar incomplete → re-prepare with elevation.” Admin flow completes export, but VS Code flow immediately deletes that tar again.
+
+  Action plan next session:
+
+  - Relax `Test-PreparedArchive` to accept the exported tar if it at least contains a minimal root filesystem (e.g., `/etc/os-release` present), or skip validation when the source was `.wsl` and export succeeded.
+  - Once relaxed, rerun helper without `-ClearCache`. Expect: prepared tar reused → `podman machine init` proceeds.
+  - After machine is up, continue with toolkit install and CDI generation as usual, then restart and GPU check.
+
+  Manual fallback (if needed):
+
+  ```powershell
+  # Use the prepared tar directly
+  pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -ImagePath 'C:\ProgramData\podman-images\Rocky-10-WSL-Base.latest.x86_64.prepared.tar'
+  ```
+
+  Notes:
+
+  - We intentionally do not launch the temp distro to avoid OOBE; post-init configuration happens inside the Podman machine environment later.
+  - If `wsl --export` succeeds, we should trust the tar and not delete it.
 
 # Unregister the WSL distro
 pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -Reset
