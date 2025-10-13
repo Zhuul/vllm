@@ -27,16 +27,12 @@ It complements the detailed Patch Workflow doc in `extras/docs/patch-workflow.md
 ---
 
 ## TL;DR
-
 1) Provision the Rocky 10 WSL distro and enable GPU + Podman
 
 ```powershell
 pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -CacheRoot C:\podman-images
 ```
 
-2) (Optional) Create a Windows podman remote context that targets the WSL podman socket over SSH
-
-```powershell
 pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -CreatePodmanContext -PodmanContextName wsl-podman-default -SkipReboot
 podman context use wsl-podman-default
 podman info
@@ -58,8 +54,6 @@ wsl -d podman-machine-default -- bash -lc "ls -l /dev/dxg; nvidia-smi || true"
 - Creates a default `podman` user for rootless Podman; enables `podman.socket` in the user session
 - Installs NVIDIA Container Toolkit and generates a CDI spec for WSL GPUs
 - (Optional) Sets up a Windows `podman` context that connects to the WSL user socket over SSH
-
-**Note**: Some warnings are expected (systemd not running during initial setup, 
 nvidia-container-toolkit package resolution issues) but the final GPU test should succeed.
 
 ---
@@ -119,6 +113,36 @@ Start-Process pwsh -ArgumentList "-NoExit", "-Command", "Set-Location 'C:\source
   - Re-run with `-CreatePodmanContext` or manually `podman system connection ls`
 - SSH connection refused
   - Check if sshd is running: `wsl -d <name> -- systemctl status sshd`
+
+---
+
+## MCP Server Issues
+
+### paper-search-mcp Authentication Errors
+
+**Problem**: Hosted MCP servers from Smithery fail with OAuth authentication errors:
+```
+Error 401 status sending message to https://server.smithery.ai/@openags/paper-search-mcp/mcp: 
+{"error":"invalid_token","error_description":"Missing Authorization header"}
+```
+
+**Root Cause**: VS Code MCP integration doesn't fully support OAuth flow for hosted servers.
+
+**Solutions**:
+1. **Local Installation** (Recommended):
+   ```bash
+   # Use Smithery CLI for local install
+   npx -y @smithery/cli install @openags/paper-search-mcp --client vscode
+   
+   # Or install from source
+   git clone https://github.com/openags/paper-search-mcp.git
+   cd paper-search-mcp
+   pip install -e .
+   ```
+
+2. **Use Alternative**: Use direct Python package installation instead of hosted service.
+
+**Status**: Use hf-mcp-server (official HuggingFace) which works reliably with VS Code MCP integration.
 
 ---
 
@@ -201,6 +225,49 @@ podman system connection rm wsl-podman-default -f
 
   - We intentionally do not launch the temp distro to avoid OOBE; post-init configuration happens inside the Podman machine environment later.
   - If `wsl --export` succeeds, we should trust the tar and not delete it.
+
+  ---
+
+  ## MCP servers: install + usage notes
+
+  This repo occasionally uses MCP servers to enrich research and automation. Quick reference for Windows + VS Code:
+
+  - Install via Smithery CLI (stable VS Code):
+    - If Insiders CLI is not in PATH, prefer stable: `code --version` should work.
+    - Install medRxiv server:
+      ```powershell
+      npx -y @smithery/cli@latest install @JackKuo666/medrxiv-mcp-server --client vscode --key <install-key>
+      ```
+    - List installed:
+      ```powershell
+      npx -y @smithery/cli@latest list --client vscode
+      ```
+    - Uninstall:
+      ```powershell
+      npx -y @smithery/cli@latest uninstall @JackKuo666/medrxiv-mcp-server --client vscode
+      ```
+
+  - If using VS Code Insiders, ensure the CLI exists on PATH:
+    ```powershell
+    & "$env:LOCALAPPDATA\Programs\Microsoft VS Code Insiders\bin\code-insiders.cmd" --version
+    ```
+    Then use `--client vscode-insiders` in the install command.
+
+  - Explicit tool invocation examples (medRxiv):
+    - Keyword search (10 results):
+      "Use tool search_medrxiv_key_words with { \"key_words\": \"glioblastoma\", \"num_results\": 10 }"
+      or
+      "Use tool search_medrxiv_key_words with { \"query\": \"glioblastoma\", \"max_results\": 10 }" (shape may vary)
+    - Advanced search:
+      "Use tool search_medrxiv_advanced with { \"term\": \"glioblastoma\", \"start_date\": \"2025-01-01\", \"end_date\": \"2025-10-13\", \"num_results\": 20 }"
+    - Fetch metadata by DOI:
+      "Use tool get_medrxiv_metadata with { \"doi\": \"10.1101/2025.09.25.25336313\" }"
+
+  - Notes:
+    - Some MCP clients require each tool to have a description to auto-invoke. If not present, manual invocation (as above) works.
+    - Keep install keys/tokens private; do not commit them.
+    - If deep-link install (one-click) fails, use the CLI route above.
+
 
 # Unregister the WSL distro
 pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -Reset
