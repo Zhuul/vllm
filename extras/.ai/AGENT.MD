@@ -273,7 +273,7 @@ podman system connection rm wsl-podman-default -f
     - Fetch metadata by DOI:
       "Use tool get_medrxiv_metadata with { \"doi\": \"10.1101/2025.09.25.25336313\" }"
 
-  - **Local Python Package Installation** (Recommended for long-term):
+  - **Local Python Package Installation** (Troubleshooting - had issues):
     - Install directly via pip: `C:/Users/arman/scoop/apps/python/3.14.0/python.exe -m pip install paper-search-mcp`
     - Add stdio configuration to `mcp.json`:
       ```json
@@ -284,8 +284,16 @@ podman system connection rm wsl-podman-default -f
         "env": {"SEMANTIC_SCHOLAR_API_KEY": ""}
       }
       ```
-    - Available tools: search_arxiv, search_pubmed, search_biorxiv, search_medrxiv, search_google_scholar, download_arxiv, etc.
-    - Test with: "Use tool search_arxiv with { \"query\": \"machine learning\", \"max_results\": 5 }"
+    - **Issue**: Server started (13 tools discovered) but tools weren't recognized in Copilot Chat
+    - **Status**: Removed from mcp.json and uninstalled Python package - will retry with Smithery CLI approach
+
+  - **Smithery CLI Installation** (Recommended - use working medrxiv pattern):
+    - Based on successful medrxiv installation pattern: `npx -y @smithery/cli@latest install @JackKuo666/medrxiv-mcp-server --client vscode --key <key>`
+    - For paper-search-mcp: `npx -y @smithery/cli@latest install @openags/paper-search-mcp --client vscode --key 9e496ac2-1e22-41df-981b-2d6b0b56e454`
+    - **Next steps after PC restart**: 
+      1. Ensure VS Code `code` command is in PATH
+      2. Use Smithery CLI with `--client vscode` (not `--client vscode-insiders`)
+      3. Test with explicit tool invocation
 
   - Notes:
     - **Python package approach preferred** over Smithery hosted servers due to OAuth/authentication issues
