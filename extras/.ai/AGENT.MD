@@ -280,84 +280,28 @@ Notes:
 
 ---
 
-## MCP servers: install + usage notes
+## MCP Servers
 
-This repo occasionally uses MCP servers to enrich research and automation. Quick reference for Windows + VS Code:
+This repo uses MCP (Model Context Protocol) servers for enhanced research, automation, and development workflows.
 
-**Installation via Smithery CLI (stable VS Code)**:
+**Active servers**: Cloudflare docs, GitHub, Markitdown, Playwright, Microsoft Learn, Clear Thought, Semantic Scholar (academic papers), Neo4j Agent Memory (when database available)
 
-- If Insiders CLI is not in PATH, prefer stable: `code --version` should work.
-- Install medRxiv server:
+**Complete documentation**: See `extras/.ai/.mcp-servers.md` for:
 
-    ```powershell
-    npx -y @smithery/cli@latest install @JackKuo666/medrxiv-mcp-server --client vscode --key <install-key>
-    ```
+- Installation guides and patterns
+- Server comparison tables
+- Usage examples and best practices
+- Troubleshooting tips
+- Neo4j database setup options (Docker/AuraDB/Desktop)
 
-- List installed:
+**Quick install pattern**:
 
-    ```powershell
-    npx -y @smithery/cli@latest list --client vscode
-    ```
+```powershell
+# Via Smithery CLI
+npx -y @smithery/cli@latest install @author/server-name --client vscode
+```
 
-- Uninstall:
-
-    ```powershell
-    npx -y @smithery/cli@latest uninstall @JackKuo666/medrxiv-mcp-server --client vscode
-    ```
-
-**VS Code Insiders Support**:
-
-- If using VS Code Insiders, ensure the CLI exists on PATH:
-
-    ```powershell
-    & "$env:LOCALAPPDATA\Programs\Microsoft VS Code Insiders\bin\code-insiders.cmd" --version
-    ```
-
-    Then use `--client vscode-insiders` in the install command.
-
-**Explicit tool invocation examples (medRxiv)**:
-
-- Keyword search (10 results):
-  "Use tool search_medrxiv_key_words with { \"key_words\": \"glioblastoma\", \"num_results\": 10 }"
-  or
-  "Use tool search_medrxiv_key_words with { \"query\": \"glioblastoma\", \"max_results\": 10 }" (shape may vary)
-- Advanced search:
-  "Use tool search_medrxiv_advanced with { \"term\": \"glioblastoma\", \"start_date\": \"2025-01-01\", \"end_date\": \"2025-10-13\", \"num_results\": 20 }"
-- Fetch metadata by DOI:
-  "Use tool get_medrxiv_metadata with { \"doi\": \"10.1101/2025.09.25.25336313\" }"
-
-**Local Python Package Installation** (Troubleshooting - had issues):
-
-- Install directly via pip: `C:/Users/arman/scoop/apps/python/3.14.0/python.exe -m pip install paper-search-mcp`
-- Add stdio configuration to `mcp.json`:
-
-    ```json
-    "paper-search-mcp": {
-      "type": "stdio",
-      "command": "C:/Users/arman/scoop/apps/python/3.14.0/python.exe",
-      "args": ["-m", "paper_search_mcp.server"],
-      "env": {"SEMANTIC_SCHOLAR_API_KEY": ""}
-    }
-    ```
-
-- **Issue**: Server started (13 tools discovered) but tools weren't recognized in Copilot Chat
-- **Status**: Removed from mcp.json and uninstalled Python package - will retry with Smithery CLI approach
-
-**Smithery CLI Installation** (Recommended - use working medrxiv pattern):
-
-- Based on successful medrxiv installation pattern: `npx -y @smithery/cli@latest install @JackKuo666/medrxiv-mcp-server --client vscode --key <key>`
-- For paper-search-mcp: `npx -y @smithery/cli@latest install @openags/paper-search-mcp --client vscode --key 9e496ac2-1e22-41df-981b-2d6b0b56e454`
-- **Next steps after PC restart**:
-    1. Ensure VS Code `code` command is in PATH
-    2. Use Smithery CLI with `--client vscode` (not `--client vscode-insiders`)
-    3. Test with explicit tool invocation
-
-**Notes**:
-
-- **Python package approach preferred** over Smithery hosted servers due to OAuth/authentication issues
-- Some MCP clients require each tool to have a description to auto-invoke. If not present, manual invocation (as above) works.
-- Keep install keys/tokens private; do not commit them.
-- If deep-link install (one-click) fails, use the CLI route above.
+**Note**: Never commit personal API keys or credentials. Use environment variables or secure storage.
 
 ---
 
