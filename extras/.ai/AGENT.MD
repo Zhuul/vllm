@@ -18,6 +18,7 @@ management for CUDA/vLLM compatibility, and editable container development.
 **Context**: This fork maintains patches for recent CUDA (13.x) compatibility,
 experimental vLLM features, and development tooling. The challenge is managing
 patches that must be applied at different build stages:
+
 - **Pre-CUDA compile**: Core compatibility (e.g., `cumem.py` for CUDA 13)
 - **Post-CUDA, pre-vLLM compile**: CUDA toolkit integration patches
 - **Post-vLLM compile**: Runtime/experimental patches (future)
@@ -27,12 +28,16 @@ It complements the detailed Patch Workflow doc in `extras/docs/patch-workflow.md
 ---
 
 ## TL;DR
+
 1) Provision the Rocky 10 WSL distro and enable GPU + Podman
 
 ```powershell
 pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -CacheRoot C:\podman-images
 ```
 
+2) Create the podman context
+
+```powershell
 pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -CreatePodmanContext -PodmanContextName wsl-podman-default -SkipReboot
 podman context use wsl-podman-default
 podman info
@@ -65,54 +70,62 @@ nvidia-container-toolkit package resolution issues) but the final GPU test shoul
 - `-CacheRoot <dir>`: Cache downloads/import data outside of `%LOCALAPPDATA%`
 - `-SkipReboot`: Skip the WSL restarts (you can manually `wsl --terminate <name>` later)
 - `-Reset`: Unregister the distro before importing
-- `-CreatePodmanContext`: Create a Windows `podman` context (defaults: user `podman`, context `wsl-<name>`) 
+- `-CreatePodmanContext`: Create a Windows `podman` context (defaults: user `podman`, context `wsl-<name>`)
 
 ---
 
 ## Troubleshooting
 
 **WSL/Import Issues**:
+
 - Import fails with `.tar.xz` not supported
-  - Decompress to `.tar` and re-run: `tar -xf Rocky-10-Container-UBI.latest.x86_64.tar.xz`
+    - Decompress to `.tar` and re-run: `tar -xf Rocky-10-Container-UBI.latest.x86_64.tar.xz`
 - `nvidia-smi` missing
-  - Ensure latest NVIDIA Windows driver with WSL support; re-run the helper to regenerate CDI
+    - Ensure latest NVIDIA Windows driver with WSL support; re-run the helper to regenerate CDI
 - Systemd not active after restart
-  - `wsl --terminate <name>` and open a new shell to re-enter the distro; check `/etc/wsl.conf`
+    - `wsl --terminate <name>` and open a new shell to re-enter the distro; check `/etc/wsl.conf`
 
 **🚨 CRITICAL: Sparse VHD Errors (WSL Import Issues)**:
+
 If you get "Sparse VHD support is currently disabled" errors, **run as Administrator**:
+
 ```powershell
 Start-Process pwsh -ArgumentList "-NoExit", "-Command", "Set-Location 'C:\sources\github\vllm'; pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -Reset -ImagePath 'C:\ProgramData\podman-images\Rocky-10-WSL-Base.latest.x86_64.wsl'" -Verb RunAs
 ```
+
 This allows the script to convert the Rocky WSL image or toggle sparse support as needed.
 
 **Compressed image errors (unexpected EOF)**:
+
 - Cause: A corrupted/incomplete cached download of the Rocky UBI archive
 - Fixes:
-  1) Re-run the helper; it now auto-detects and clears the bad cache and retries once
-  2) Manually delete the cache: `C:\ProgramData\podman-images\Rocky-10-Container-UBI.latest.x86_64.tar.xz`
-  3) As fallback, run elevated and use `-ConvertImage` or a `.wsl`/prepared `.tar` via `-ImagePath`
+    1) Re-run the helper; it now auto-detects and clears the bad cache and retries once
+    2) Manually delete the cache: `C:\ProgramData\podman-images\Rocky-10-Container-UBI.latest.x86_64.tar.xz`
+    3) As fallback, run elevated and use `-ConvertImage` or a `.wsl`/prepared `.tar` via `-ImagePath`
 
 Example elevated one-liner if needed:
+
 ```powershell
 Start-Process pwsh -ArgumentList "-NoExit", "-Command", "Set-Location 'C:\sources\github\vllm'; pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -Reset -ConvertImage -ImagePath 'https://dl.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-Container-UBI.latest.x86_64.tar.xz'" -Verb RunAs
 ```
 
 **Container/Build Issues**:
-- "Image missing. Use --build." 
-  - Run `extras/podman/run.ps1 --build` to build the dev container first
+
+- "Image missing. Use --build."
+    - Run `extras/podman/run.ps1 --build` to build the dev container first
 - Patch application failures
-  - Check `extras/patches/python-overrides.txt` for syntax errors
-  - Verify source files haven't moved upstream (sync issue)
+    - Check `extras/patches/python-overrides.txt` for syntax errors
+    - Verify source files haven't moved upstream (sync issue)
 - CUDA version mismatches
-  - Pre-CUDA patches (like `cumem.py`) should be in the overlay system
-  - Check container build logs for compilation errors
+    - Pre-CUDA patches (like `cumem.py`) should be in the overlay system
+    - Check container build logs for compilation errors
 
 **Podman Context Issues**:
+
 - `podman` cannot connect from Windows
-  - Re-run with `-CreatePodmanContext` or manually `podman system connection ls`
+    - Re-run with `-CreatePodmanContext` or manually `podman system connection ls`
 - SSH connection refused
-  - Check if sshd is running: `wsl -d <name> -- systemctl status sshd`
+    - Check if sshd is running: `wsl -d <name> -- systemctl status sshd`
 
 ---
 
@@ -121,7 +134,8 @@ Start-Process pwsh -ArgumentList "-NoExit", "-Command", "Set-Location 'C:\source
 ### paper-search-mcp Authentication Errors
 
 **Problem**: Hosted MCP servers from Smithery fail with OAuth authentication errors:
-```
+
+```text
 Error 401 status sending message to https://server.smithery.ai/@openags/paper-search-mcp/mcp: 
 {"error":"invalid_token","error_description":"Missing Authorization header"}
 ```
@@ -129,16 +143,18 @@ Error 401 status sending message to https://server.smithery.ai/@openags/paper-se
 **Root Cause**: VS Code MCP integration doesn't fully support OAuth flow for hosted servers.
 
 **Solutions**:
+
 1. **Local Installation** (Recommended):
-   ```bash
-   # Use Smithery CLI for local install
-   npx -y @smithery/cli install @openags/paper-search-mcp --client vscode
-   
-   # Or install from source
-   git clone https://github.com/openags/paper-search-mcp.git
-   cd paper-search-mcp
-   pip install -e .
-   ```
+
+    ```bash
+    # Use Smithery CLI for local install
+    npx -y @smithery/cli install @openags/paper-search-mcp --client vscode
+    
+    # Or install from source
+    git clone https://github.com/openags/paper-search-mcp.git
+    cd paper-search-mcp
+    pip install -e .
+    ```
 
 2. **Use Alternative**: Use direct Python package installation instead of hosted service.
 
@@ -151,48 +167,53 @@ Error 401 status sending message to https://server.smithery.ai/@openags/paper-se
 The complete development cycle with patch management:
 
 1. **Sync upstream changes** (preserves `extras/` and patches):
-   ```powershell
-   pwsh extras/tools/fork-sync/sync_with_upstream.ps1
-   ```
-   
-   **Fork Sync Tooling Details**:
-   - **Purpose**: Safely merge upstream `vllm-project/vllm` changes while preserving fork-specific customizations
-   - **Protected Paths**: Automatically backs up and restores `extras/` directory and `.github/workflows/fork-sync.yml`
-   - **Process**: Fetches upstream, attempts fast-forward merge, falls back to regular merge if needed
-   - **Safety**: Validates clean working tree, handles in-progress merges/rebases, restores protected content
-   - **Windows Support**: `sync_with_upstream.ps1` wrapper locates Git Bash and executes the shell script
-   - **Customization**: Override protected paths via `PROTECTED_PATHS="path1 path2"` environment variable
-   - **Usage**: Run from repository root, accepts optional remote/branch parameters
-   - **Post-sync**: Automatically commits restored protected paths and suggests push command
+
+    ```powershell
+    pwsh extras/tools/fork-sync/sync_with_upstream.ps1
+    ```
+
+    **Fork Sync Tooling Details**:
+
+    - **Purpose**: Safely merge upstream `vllm-project/vllm` changes while preserving fork-specific customizations
+    - **Protected Paths**: Automatically backs up and restores `extras/` directory and `.github/workflows/fork-sync.yml`
+    - **Process**: Fetches upstream, attempts fast-forward merge, falls back to regular merge if needed
+    - **Safety**: Validates clean working tree, handles in-progress merges/rebases, restores protected content
+    - **Windows Support**: `sync_with_upstream.ps1` wrapper locates Git Bash and executes the shell script
+    - **Customization**: Override protected paths via `PROTECTED_PATHS="path1 path2"` environment variable
+    - **Usage**: Run from repository root, accepts optional remote/branch parameters
+    - **Post-sync**: Automatically commits restored protected paths and suggests push command
 
 2. **Build container with pre-build patches**:
-   ```powershell
-   # The entrypoint applies patches from extras/patches/python-overrides.txt
-   # before CUDA compilation (e.g., cumem.py for CUDA 13 compatibility)
-   extras/podman/run.ps1 --build
-   ```
+
+    ```powershell
+    # The entrypoint applies patches from extras/patches/python-overrides.txt
+    # before CUDA compilation (e.g., cumem.py for CUDA 13 compatibility)
+    extras/podman/run.ps1 --build
+    ```
 
 3. **Enter development mode**:
-   ```powershell
-   # Interactive shell with editable vLLM install
-   extras/podman/run.ps1 -Interactive
-   
-   # Or run with GPU validation
-   extras/podman/run.ps1 -GPUCheck
-   ```
+
+    # Interactive shell with editable vLLM install
+    extras/podman/run.ps1 -Interactive
+    
+    # Or run with GPU validation
+    extras/podman/run.ps1 -GPUCheck
+    ```
 
 4. **Inside container - test your changes**:
-   ```bash
-   # The workspace is mounted as /workspace, vLLM is editable-installed
-   cd /workspace
-   python -c "import vllm; print(vllm.__version__)"
-   
-   # Test GPU + recent CUDA
-   python -c "import torch; print(f'CUDA: {torch.version.cuda}, GPU: {torch.cuda.get_device_name()}')"
-   ```
+
+    ```bash
+    # The workspace is mounted as /workspace, vLLM is editable-installed
+    cd /workspace
+    python -c "import vllm; print(vllm.__version__)"
+    
+    # Test GPU + recent CUDA
+    python -c "import torch; print(f'CUDA: {torch.version.cuda}, GPU: {torch.cuda.get_device_name()}')"
+    ```
 
 **Patch Management Notes**:
-- Pre-CUDA patches: Add to `extras/patches/python-overrides.txt` 
+
+- Pre-CUDA patches: Add to `extras/patches/python-overrides.txt`
 - Post-CUDA patches: Can be applied manually in interactive mode or via future automation
 - Repository stays clean: patches are applied to overlay directories, not the working tree
 
