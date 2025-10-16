@@ -29,13 +29,13 @@ It complements the detailed Patch Workflow doc in `extras/docs/patch-workflow.md
 
 ## TL;DR
 
-1) Provision the Rocky 10 WSL distro and enable GPU + Podman
+1. Provision the Rocky 10 WSL distro and enable GPU + Podman
 
 ```powershell
 pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -CacheRoot C:\podman-images
 ```
 
-2) Create the podman context
+1. Create the podman context
 
 ```powershell
 pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -CreatePodmanContext -PodmanContextName wsl-podman-default -SkipReboot
@@ -43,7 +43,7 @@ podman context use wsl-podman-default
 podman info
 ```
 
-3) Validate GPU availability from inside the distro
+1. Validate GPU availability from inside the distro
 
 ```powershell
 wsl -d podman-machine-default -- bash -lc "ls -l /dev/dxg; nvidia-smi || true"
@@ -191,22 +191,23 @@ The complete development cycle with patch management:
     extras/podman/run.ps1 --build
     ```
 
-3. **Enter development mode**:
+1. **Enter development mode**:
 
+    ```powershell
     # Interactive shell with editable vLLM install
     extras/podman/run.ps1 -Interactive
-    
+
     # Or run with GPU validation
     extras/podman/run.ps1 -GPUCheck
     ```
 
-4. **Inside container - test your changes**:
+1. **Inside container - test your changes**:
 
     ```bash
     # The workspace is mounted as /workspace, vLLM is editable-installed
     cd /workspace
     python -c "import vllm; print(vllm.__version__)"
-    
+
     # Test GPU + recent CUDA
     python -c "import torch; print(f'CUDA: {torch.version.cuda}, GPU: {torch.cuda.get_device_name()}')"
     ```
@@ -250,80 +251,99 @@ podman system connection rm wsl-podman-default -f
   ```powershell
   # Use the prepared tar directly
   pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -ImagePath 'C:\ProgramData\podman-images\Rocky-10-WSL-Base.latest.x86_64.prepared.tar'
-  ```
+```
 
-  Notes:
+Notes:
 
-  - We intentionally do not launch the temp distro to avoid OOBE; post-init configuration happens inside the Podman machine environment later.
-  - If `wsl --export` succeeds, we should trust the tar and not delete it.
+- We intentionally do not launch the temp distro to avoid OOBE; post-init configuration happens inside the Podman machine environment later.
+- If `wsl --export` succeeds, we should trust the tar and not delete it.
 
-  ---
+---
 
-  ## MCP servers: install + usage notes
+## MCP servers: install + usage notes
 
-  This repo occasionally uses MCP servers to enrich research and automation. Quick reference for Windows + VS Code:
+This repo occasionally uses MCP servers to enrich research and automation. Quick reference for Windows + VS Code:
 
-  - Install via Smithery CLI (stable VS Code):
-    - If Insiders CLI is not in PATH, prefer stable: `code --version` should work.
-    - Install medRxiv server:
-      ```powershell
-      npx -y @smithery/cli@latest install @JackKuo666/medrxiv-mcp-server --client vscode --key <install-key>
-      ```
-    - List installed:
-      ```powershell
-      npx -y @smithery/cli@latest list --client vscode
-      ```
-    - Uninstall:
-      ```powershell
-      npx -y @smithery/cli@latest uninstall @JackKuo666/medrxiv-mcp-server --client vscode
-      ```
+**Installation via Smithery CLI (stable VS Code)**:
 
-  - If using VS Code Insiders, ensure the CLI exists on PATH:
+- If Insiders CLI is not in PATH, prefer stable: `code --version` should work.
+- Install medRxiv server:
+
+    ```powershell
+    npx -y @smithery/cli@latest install @JackKuo666/medrxiv-mcp-server --client vscode --key <install-key>
+    ```
+
+- List installed:
+
+    ```powershell
+    npx -y @smithery/cli@latest list --client vscode
+    ```
+
+- Uninstall:
+
+    ```powershell
+    npx -y @smithery/cli@latest uninstall @JackKuo666/medrxiv-mcp-server --client vscode
+    ```
+
+**VS Code Insiders Support**:
+
+- If using VS Code Insiders, ensure the CLI exists on PATH:
+
     ```powershell
     & "$env:LOCALAPPDATA\Programs\Microsoft VS Code Insiders\bin\code-insiders.cmd" --version
     ```
+
     Then use `--client vscode-insiders` in the install command.
 
-  - Explicit tool invocation examples (medRxiv):
-    - Keyword search (10 results):
-      "Use tool search_medrxiv_key_words with { \"key_words\": \"glioblastoma\", \"num_results\": 10 }"
-      or
-      "Use tool search_medrxiv_key_words with { \"query\": \"glioblastoma\", \"max_results\": 10 }" (shape may vary)
-    - Advanced search:
-      "Use tool search_medrxiv_advanced with { \"term\": \"glioblastoma\", \"start_date\": \"2025-01-01\", \"end_date\": \"2025-10-13\", \"num_results\": 20 }"
-    - Fetch metadata by DOI:
-      "Use tool get_medrxiv_metadata with { \"doi\": \"10.1101/2025.09.25.25336313\" }"
+**Explicit tool invocation examples (medRxiv)**:
 
-  - **Local Python Package Installation** (Troubleshooting - had issues):
-    - Install directly via pip: `C:/Users/arman/scoop/apps/python/3.14.0/python.exe -m pip install paper-search-mcp`
-    - Add stdio configuration to `mcp.json`:
-      ```json
-      "paper-search-mcp": {
-        "type": "stdio",
-        "command": "C:/Users/arman/scoop/apps/python/3.14.0/python.exe",
-        "args": ["-m", "paper_search_mcp.server"],
-        "env": {"SEMANTIC_SCHOLAR_API_KEY": ""}
-      }
-      ```
-    - **Issue**: Server started (13 tools discovered) but tools weren't recognized in Copilot Chat
-    - **Status**: Removed from mcp.json and uninstalled Python package - will retry with Smithery CLI approach
+- Keyword search (10 results):
+  "Use tool search_medrxiv_key_words with { \"key_words\": \"glioblastoma\", \"num_results\": 10 }"
+  or
+  "Use tool search_medrxiv_key_words with { \"query\": \"glioblastoma\", \"max_results\": 10 }" (shape may vary)
+- Advanced search:
+  "Use tool search_medrxiv_advanced with { \"term\": \"glioblastoma\", \"start_date\": \"2025-01-01\", \"end_date\": \"2025-10-13\", \"num_results\": 20 }"
+- Fetch metadata by DOI:
+  "Use tool get_medrxiv_metadata with { \"doi\": \"10.1101/2025.09.25.25336313\" }"
 
-  - **Smithery CLI Installation** (Recommended - use working medrxiv pattern):
-    - Based on successful medrxiv installation pattern: `npx -y @smithery/cli@latest install @JackKuo666/medrxiv-mcp-server --client vscode --key <key>`
-    - For paper-search-mcp: `npx -y @smithery/cli@latest install @openags/paper-search-mcp --client vscode --key 9e496ac2-1e22-41df-981b-2d6b0b56e454`
-    - **Next steps after PC restart**: 
-      1. Ensure VS Code `code` command is in PATH
-      2. Use Smithery CLI with `--client vscode` (not `--client vscode-insiders`)
-      3. Test with explicit tool invocation
+**Local Python Package Installation** (Troubleshooting - had issues):
 
-  - Notes:
-    - **Python package approach preferred** over Smithery hosted servers due to OAuth/authentication issues
-    - Some MCP clients require each tool to have a description to auto-invoke. If not present, manual invocation (as above) works.
-    - Keep install keys/tokens private; do not commit them.
-    - If deep-link install (one-click) fails, use the CLI route above.
+- Install directly via pip: `C:/Users/arman/scoop/apps/python/3.14.0/python.exe -m pip install paper-search-mcp`
+- Add stdio configuration to `mcp.json`:
 
+    ```json
+    "paper-search-mcp": {
+      "type": "stdio",
+      "command": "C:/Users/arman/scoop/apps/python/3.14.0/python.exe",
+      "args": ["-m", "paper_search_mcp.server"],
+      "env": {"SEMANTIC_SCHOLAR_API_KEY": ""}
+    }
+    ```
 
-# Unregister the WSL distro
+- **Issue**: Server started (13 tools discovered) but tools weren't recognized in Copilot Chat
+- **Status**: Removed from mcp.json and uninstalled Python package - will retry with Smithery CLI approach
+
+**Smithery CLI Installation** (Recommended - use working medrxiv pattern):
+
+- Based on successful medrxiv installation pattern: `npx -y @smithery/cli@latest install @JackKuo666/medrxiv-mcp-server --client vscode --key <key>`
+- For paper-search-mcp: `npx -y @smithery/cli@latest install @openags/paper-search-mcp --client vscode --key 9e496ac2-1e22-41df-981b-2d6b0b56e454`
+- **Next steps after PC restart**:
+    1. Ensure VS Code `code` command is in PATH
+    2. Use Smithery CLI with `--client vscode` (not `--client vscode-insiders`)
+    3. Test with explicit tool invocation
+
+**Notes**:
+
+- **Python package approach preferred** over Smithery hosted servers due to OAuth/authentication issues
+- Some MCP clients require each tool to have a description to auto-invoke. If not present, manual invocation (as above) works.
+- Keep install keys/tokens private; do not commit them.
+- If deep-link install (one-click) fails, use the CLI route above.
+
+---
+
+## Unregister the WSL distro
+
+```powershell
 pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -Reset
 ```
 
@@ -333,13 +353,13 @@ pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machi
 
 **Critical Infrastructure**: These scripts maintain alignment with upstream `vllm-project/vllm` while preserving our fork-specific customizations.
 
-### Scripts Overview
+## Scripts Overview
 
 - **`sync_with_upstream.ps1`**: PowerShell wrapper for Windows environments
   - Locates Git Bash installation automatically
   - Converts Windows paths to MSYS format for bash execution
   - Passes through all parameters to the shell script
-  
+
 - **`sync_with_upstream.sh`**: Core bash script that performs the sync operation
   - Fetches from upstream remote (default: `upstream/main`)
   - Backs up protected paths before merge
@@ -347,12 +367,13 @@ pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machi
   - Restores protected content and commits changes
   - Ensures `.gitignore` includes `extras/secrets/*.env`
 
-### Protected Paths (Default)
+## Protected Paths (Default)
 
 - `extras/` - All fork-specific tooling, patches, configurations
 - `.github/workflows/fork-sync.yml` - Fork-specific GitHub Actions workflow
 
-### Usage Patterns
+## Usage Patterns
+
 
 ```powershell
 # Standard sync (most common)
@@ -401,6 +422,7 @@ $env:PROTECTED_PATHS = "extras custom-dir"; pwsh extras/tools/fork-sync/sync_wit
 ## Quick reference
 
 **Full cycle from scratch**:
+
 ```powershell
 # 1. Provision WSL2 + GPU
 pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -CacheRoot C:\podman-images
@@ -416,6 +438,7 @@ extras/podman/run.ps1 -Interactive
 ```
 
 **Reset everything**:
+
 ```powershell
 # Remove WSL distro
 pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -Reset
