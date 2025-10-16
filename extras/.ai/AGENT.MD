@@ -4,7 +4,27 @@ This document is the operator-facing playbook for the complete vLLM development
 workflow: GPU-capable Podman backend on Windows WSL2 + Rocky Linux 10, patch
 management for CUDA/vLLM compatibility, and editable container development.
 
-## 🚨 CRITICAL WORKFLOW RULE: ALWAYS WORK ON MAIN BRANCH
+## � Markdown Guidelines for GitHub CI
+
+**Follow these rules to pass `markdownlint` checks on first try:**
+
+- **Headings**: Always surround with blank lines (above and below). Start at beginning of line (no indentation).
+- **Heading Hierarchy**: Increment by one level only (h1 → h2 → h3, never h1 → h3).
+- **Code Blocks**: Always add blank line before and after. Specify language (`` ```bash ``, `` ```powershell ``, `` ```json ``).
+- **Lists**:
+    - Ordered lists: Use sequential numbering (`1.`, `2.`, `3.`) not parentheses (`1)`) or repeated (`1.`, `1.`, `1.`)
+    - Nested items: Indent with 4 spaces (not 2)
+    - Surround lists with blank lines
+- **No Multiple Blank Lines**: Use only one blank line between sections
+- **Trailing Spaces**: Remove all trailing whitespace (except 2 spaces for hard line breaks)
+- **Shell Comments**: Keep `#` comments **inside** code blocks, not outside (prevents them being parsed as headings)
+- **File Endings**: End all files with exactly one newline
+
+**Quick validation**: Run `pre-commit run markdownlint --all-files` before committing.
+
+---
+
+## �🚨 CRITICAL WORKFLOW RULE: ALWAYS WORK ON MAIN BRANCH
 
 **⚠️ NEVER create feature branches without explicit approval first!**
 
@@ -191,7 +211,7 @@ The complete development cycle with patch management:
     extras/podman/run.ps1 --build
     ```
 
-1. **Enter development mode**:
+3. **Enter development mode**:
 
     ```powershell
     # Interactive shell with editable vLLM install
@@ -201,7 +221,7 @@ The complete development cycle with patch management:
     extras/podman/run.ps1 -GPUCheck
     ```
 
-1. **Inside container - test your changes**:
+4. **Inside container - test your changes**:
 
     ```bash
     # The workspace is mounted as /workspace, vLLM is editable-installed
@@ -356,16 +376,16 @@ pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machi
 ## Scripts Overview
 
 - **`sync_with_upstream.ps1`**: PowerShell wrapper for Windows environments
-  - Locates Git Bash installation automatically
-  - Converts Windows paths to MSYS format for bash execution
-  - Passes through all parameters to the shell script
+    - Locates Git Bash installation automatically
+    - Converts Windows paths to MSYS format for bash execution
+    - Passes through all parameters to the shell script
 
 - **`sync_with_upstream.sh`**: Core bash script that performs the sync operation
-  - Fetches from upstream remote (default: `upstream/main`)
-  - Backs up protected paths before merge
-  - Attempts fast-forward merge, falls back to regular merge
-  - Restores protected content and commits changes
-  - Ensures `.gitignore` includes `extras/secrets/*.env`
+    - Fetches from upstream remote (default: `upstream/main`)
+    - Backs up protected paths before merge
+    - Attempts fast-forward merge, falls back to regular merge
+    - Restores protected content and commits changes
+    - Ensures `.gitignore` includes `extras/secrets/*.env`
 
 ## Protected Paths (Default)
 
@@ -373,7 +393,6 @@ pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machi
 - `.github/workflows/fork-sync.yml` - Fork-specific GitHub Actions workflow
 
 ## Usage Patterns
-
 
 ```powershell
 # Standard sync (most common)
