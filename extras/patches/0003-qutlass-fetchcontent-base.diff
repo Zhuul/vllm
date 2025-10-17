@@ -1,13 +1,12 @@
 diff --git a/cmake/external_projects/qutlass.cmake b/cmake/external_projects/qutlass.cmake
-index 41a7aab84..b2c2cf538 100644
+index 5a59a4099..b1bdd4078 100644
 --- a/cmake/external_projects/qutlass.cmake
 +++ b/cmake/external_projects/qutlass.cmake
-@@
- include(FetchContent)
- 
+@@ -2,6 +2,23 @@ include(FetchContent) 
+
  set(CUTLASS_INCLUDE_DIR "${CUTLASS_INCLUDE_DIR}" CACHE PATH "Path to CUTLASS include/ directory")
-+
-+set(_qutlass_fetch_base)
+ 
++set(_qutlass_fetch_base "")
 +if(DEFINED FETCHCONTENT_BASE_DIR AND NOT "${FETCHCONTENT_BASE_DIR}" STREQUAL "")
 +  set(_qutlass_fetch_base "${FETCHCONTENT_BASE_DIR}")
 +elseif(DEFINED CMAKE_FETCHCONTENT_BASE_DIR AND NOT "${CMAKE_FETCHCONTENT_BASE_DIR}" STREQUAL "")
@@ -19,17 +18,15 @@ index 41a7aab84..b2c2cf538 100644
 +endif()
 +
 +set(_qutlass_default_source_dir "${_qutlass_fetch_base}/qutlass-src")
-+set(_qutlass_default_binary_dir "${CMAKE_BINARY_DIR}/_deps/qutlass-build")
++set(_qutlass_default_binary_dir "${_qutlass_fetch_base}/qutlass-build")
 +set(_qutlass_default_download_dir "${_qutlass_fetch_base}/qutlass-download")
 +set(_qutlass_default_stamp_dir "${_qutlass_fetch_base}/qutlass-stamp")
 +set(_qutlass_default_tmp_dir "${_qutlass_fetch_base}/qutlass-tmp")
- 
++
  if(DEFINED ENV{QUTLASS_SRC_DIR})
    set(QUTLASS_SRC_DIR $ENV{QUTLASS_SRC_DIR})
  endif()
- 
-@@
-     qutlass
+@@ -19,6 +36,11 @@ else()
      GIT_REPOSITORY https://github.com/IST-DASLab/qutlass.git
      GIT_TAG 830d2c4537c7396e14a02a46fbddd18b5d107c65
      GIT_PROGRESS TRUE
@@ -41,23 +38,17 @@ index 41a7aab84..b2c2cf538 100644
      CONFIGURE_COMMAND ""
      BUILD_COMMAND ""
    )
- endif()
- 
- FetchContent_Populate(qutlass)
- 
- if(NOT qutlass_SOURCE_DIR)
-   message(FATAL_ERROR "[QUTLASS] source directory could not be resolved.")
+@@ -31,6 +53,13 @@ if(NOT qutlass_SOURCE_DIR)
  endif()
  message(STATUS "[QUTLASS] QuTLASS is available at ${qutlass_SOURCE_DIR}")
-+
+ 
 +unset(_qutlass_fetch_base)
 +unset(_qutlass_default_source_dir)
 +unset(_qutlass_default_binary_dir)
 +unset(_qutlass_default_download_dir)
 +unset(_qutlass_default_stamp_dir)
 +unset(_qutlass_default_tmp_dir)
- 
++
  cuda_archs_loose_intersection(QUTLASS_ARCHS "12.0a;10.0a" "${CUDA_ARCHS}")
  if(${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER 12.8 AND QUTLASS_ARCHS)
  
-   if(QUTLASS_ARCHS MATCHES "10\\.0a")
