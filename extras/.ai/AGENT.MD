@@ -1,7 +1,7 @@
 # Agent quickstart: vLLM Development with GPU + Patches
 
 This document is the operator-facing playbook for the complete vLLM development
-workflow: GPU-capable Podman backend on Windows WSL2 + Rocky Linux 10, patch
+workflow: GPU-capable Podman backend on Windows WSL2 + Fedora CoreOS, patch
 management for CUDA/vLLM compatibility, and editable container development.
 
 ## � Markdown Guidelines for GitHub CI

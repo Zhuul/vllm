@@ -61,34 +61,22 @@ and keeps the Windows-mounted repository free of unexpected modifications.
 
 ## 6. GPU passthrough on Windows + WSL2 Podman
 
-1. Make sure your Windows host has the latest NVIDIA driver with WSL2 support and that `wsl --update`
+- Make sure your Windows host has the latest NVIDIA driver with WSL2 support and that `wsl --update`
    has run recently.
-1. If you prefer to prepare the machine manually, download the
-  [Rocky Linux 10 WSL Base image](https://dl.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-WSL-Base.latest.x86_64.wsl)
-  and run `podman machine init --image <local-file>`. The helper downloads and caches this archive automatically,
-  so you can skip this step unless you want to supply a different build or an offline mirror.
+- If you prefer to install manually, use `podman machine init --image <Fedora CoreOS qcow>` from an elevated shell.
     > **Heads-up:** Podman on Windows currently rejects `template://` URIs, so always point it at an actual
     > local file or an HTTP(S) download.
-1. From the repository root, run the helper script:
+- From the repository root, run the helper script:
 
   ```powershell
-  pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1
+  pwsh extras/tools/enable-podman-latest-fedora-wsl-gpu.ps1 -Install
   ```
 
-  Add `-MachineName <name>` if you use a non-default Podman machine or `-SkipReboot` when you prefer
-  to restart it manually later. Use `-ImagePath <file-or-url>` to override the default image; HTTP(S) URLs are
-  downloaded into `%LOCALAPPDATA%\podman-images` on first use or into the directory specified by the
-  `PODMAN_IMAGE_CACHE` environment variable. Pass `-Rootful` to enable rootful
-  mode automatically. Add `-Reset` to wipe and reinitialize the Podman machine (the helper removes the
-  existing VM and re-runs `podman machine init`) when you want to start from a clean slate. If WSL stops
-  the import with "Sparse VHD support is currently disabled", rerun the helper with `-AllowSparseUnsafe` to
-  let it attempt the `wsl.exe --manage <machine> --set-sparse --allow-unsafe` toggle that Microsoft suggests.
-  On hosts where `--allow-unsafe` is unavailable, the helper automatically extracts the Rocky `.wsl` archive and
-  converts its VHDX to fixed size (requires the Hyper-V PowerShell module). If Hyper-V tooling is missing, update
-  WSL (`wsl.exe --update --pre-release`) or convert the archive manually before re-running the helper with
-  `-ImagePath <converted.vhdx>`.
+  Add `-CpuCount <n>` / `-MemoryGB <n>` to override auto-selected resources. Use `-Update` to refresh NVIDIA CDI
+  bindings without tearing the VM down, or `-Remove` for a clean slate. When elevation is required, the script will
+  re-launch itself via `Start-Process -Verb RunAs` and propagate the detected Podman CLI path automatically.
 
-1. After the script restarts the machine, launch `extras/podman/run.ps1 -GPUCheck` (or `run.sh --gpu-check`)
+- After the script restarts the machine, launch `extras/podman/run.ps1 -GPUCheck` (or `run.sh --gpu-check`)
    to confirm that `/dev/dxg` and the CUDA libraries are visible from inside the dev container. If the helper
    reports `Image missing. Use --build.`, rebuild the development container first via `extras/podman/run.ps1 --build`.
 
