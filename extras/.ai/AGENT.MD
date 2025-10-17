@@ -49,18 +49,17 @@ It complements the detailed Patch Workflow doc in `extras/docs/patch-workflow.md
 
 ## TL;DR
 
-1. Provision the Rocky 10 WSL distro and enable GPU + Podman
+1. Provision the WSL Podman machine with GPU enabled
 
 ```powershell
-pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -CacheRoot C:\podman-images
+pwsh extras/tools/enable-podman-latest-fedora-wsl-gpu.ps1 -Install
 ```
 
-1. Create the podman context
+1. (Optional) Tune resources or refresh GPU config
 
 ```powershell
-pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -CreatePodmanContext -PodmanContextName wsl-podman-default -SkipReboot
-podman context use wsl-podman-default
-podman info
+pwsh extras/tools/enable-podman-latest-fedora-wsl-gpu.ps1 -Install -CpuCount 8 -MemoryGB 16
+pwsh extras/tools/enable-podman-latest-fedora-wsl-gpu.ps1 -Update
 ```
 
 1. Validate GPU availability from inside the distro
@@ -73,79 +72,41 @@ wsl -d podman-machine-default -- bash -lc "ls -l /dev/dxg; nvidia-smi || true"
 
 ## What the helper does
 
-- Downloads the Rocky Linux 10 UBI container rootfs (or uses `-ImagePath`) and imports it into WSL2
-- Enables systemd via `/etc/wsl.conf` and gracefully restarts the distro
-- Installs base packages: `podman`, `openssh-server`, `fuse-overlayfs`, `slirp4netns`, `iptables`
-- Creates a default `podman` user for rootless Podman; enables `podman.socket` in the user session
-- Installs NVIDIA Container Toolkit and generates a CDI spec for WSL GPUs
-- (Optional) Sets up a Windows `podman` context that connects to the WSL user socket over SSH
-nvidia-container-toolkit package resolution issues) but the final GPU test should succeed.
+- Initializes `podman-machine-default` on WSL with the latest Fedora CoreOS image.
+- Configures CPU/RAM sizing (auto-detects but accepts `-CpuCount`/`-MemoryGB`).
+- Ensures the machine starts immediately and exposes the NVIDIA CDI devices required by Podman Desktop.
+- Re-runs GPU wiring in place via `-Update`, or removes the machine entirely with `-Remove`.
 
 ---
 
 ## Common options
 
-- `-MachineName <name>`: WSL distro name (default: `podman-machine-default`)
-- `-ImagePath <file-or-url>`: Override the Rocky UBI image; `.tar.xz` or `.tar` supported
-- `-CacheRoot <dir>`: Cache downloads/import data outside of `%LOCALAPPDATA%`
-- `-SkipReboot`: Skip the WSL restarts (you can manually `wsl --terminate <name>` later)
-- `-Reset`: Unregister the distro before importing
-- `-CreatePodmanContext`: Create a Windows `podman` context (defaults: user `podman`, context `wsl-<name>`)
+- `-Install`: Create the machine if missing (safe to rerun).
+- `-Update`: Refresh GPU/CDI bindings on an existing machine.
+- `-Remove`: Tear down the machine entirely.
+- `-CpuCount <n>` / `-MemoryGB <n>`: Override the auto-sizing heuristics.
+- `-PodmanPath <path>`: Explicit Podman CLI path when elevation requires it.
 
 ---
 
 ## Troubleshooting
 
-**WSL/Import Issues**:
+**Podman machine fails to start**
 
-- Import fails with `.tar.xz` not supported
-    - Decompress to `.tar` and re-run: `tar -xf Rocky-10-Container-UBI.latest.x86_64.tar.xz`
-- `nvidia-smi` missing
-    - Ensure latest NVIDIA Windows driver with WSL support; re-run the helper to regenerate CDI
-- Systemd not active after restart
-    - `wsl --terminate <name>` and open a new shell to re-enter the distro; check `/etc/wsl.conf`
+- Run with elevation once so the helper can register CDI devices: `Start-Process pwsh -Verb RunAs -ArgumentList 'extras/tools/enable-podman-latest-fedora-wsl-gpu.ps1 -Install'`.
+- Use `-Remove` then `-Install` if initialization leaves the machine in a broken state.
 
-**🚨 CRITICAL: Sparse VHD Errors (WSL Import Issues)**:
+**GPU missing inside the container**
 
-If you get "Sparse VHD support is currently disabled" errors, **run as Administrator**:
+- Confirm `nvidia-smi` works in Windows and WSL: `wsl -d podman-machine-default -- nvidia-smi`.
+- Re-run the helper with `-Update` to regenerate CDI specs.
+- Ensure Podman Desktop (or CLI) is ≥4.9 for CDI-aware GPU passthrough.
 
-```powershell
-Start-Process pwsh -ArgumentList "-NoExit", "-Command", "Set-Location 'C:\sources\github\vllm'; pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -Reset -ImagePath 'C:\ProgramData\podman-images\Rocky-10-WSL-Base.latest.x86_64.wsl'" -Verb RunAs
-```
+**Container rebuild issues**
 
-This allows the script to convert the Rocky WSL image or toggle sparse support as needed.
-
-**Compressed image errors (unexpected EOF)**:
-
-- Cause: A corrupted/incomplete cached download of the Rocky UBI archive
-- Fixes:
-    1) Re-run the helper; it now auto-detects and clears the bad cache and retries once
-    2) Manually delete the cache: `C:\ProgramData\podman-images\Rocky-10-Container-UBI.latest.x86_64.tar.xz`
-    3) As fallback, run elevated and use `-ConvertImage` or a `.wsl`/prepared `.tar` via `-ImagePath`
-
-Example elevated one-liner if needed:
-
-```powershell
-Start-Process pwsh -ArgumentList "-NoExit", "-Command", "Set-Location 'C:\sources\github\vllm'; pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -Reset -ConvertImage -ImagePath 'https://dl.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-Container-UBI.latest.x86_64.tar.xz'" -Verb RunAs
-```
-
-**Container/Build Issues**:
-
-- "Image missing. Use --build."
-    - Run `extras/podman/run.ps1 --build` to build the dev container first
-- Patch application failures
-    - Check `extras/patches/python-overrides.txt` for syntax errors
-    - Verify source files haven't moved upstream (sync issue)
-- CUDA version mismatches
-    - Pre-CUDA patches (like `cumem.py`) should be in the overlay system
-    - Check container build logs for compilation errors
-
-**Podman Context Issues**:
-
-- `podman` cannot connect from Windows
-    - Re-run with `-CreatePodmanContext` or manually `podman system connection ls`
-- SSH connection refused
-    - Check if sshd is running: `wsl -d <name> -- systemctl status sshd`
+- `extras/podman/run.ps1 --build --no-cache` rebuilds the image from scratch.
+- Patches failing to apply: inspect `extras/patches/*.diff` and `extras/patches/python-overrides.txt` for path drift after upstream syncs.
+- Nightly torch skew: always install `torch torchvision torchaudio` together (handled in the Dockerfile). If manual install is needed, pass the shared `--index-url` for the nightly wheelhouse.
 
 ---
 
@@ -234,9 +195,11 @@ The complete development cycle with patch management:
 
 **Patch Management Notes**:
 
-- Pre-CUDA patches: Add to `extras/patches/python-overrides.txt`
-- Post-CUDA patches: Can be applied manually in interactive mode or via future automation
-- Repository stays clean: patches are applied to overlay directories, not the working tree
+- Pre-CUDA overlays live in `extras/patches/python-overrides.txt`; `dev-setup.sh` copies listed files into `/opt/work/python-overrides` and registers a `.pth` so they shadow upstream modules without leaving Git diffs.
+- Container startup runs `extras/podman/entrypoint/apply-patches-then-exec.sh`, which normalizes line endings and invokes `extras/patches/apply_patches_overlay.sh` to `git apply` every `extras/patches/*.diff` (including `0003-qutlass-fetchcontent-base.diff`) before the main command.
+- `apply_patches_overlay.sh` records touched files in `/opt/work/tmp/vllm_patched_files.txt` during overlay mode so `reset_patched_files.sh` can `git checkout` them after setup, keeping the worktree clean.
+- `run.ps1 -Setup` re-runs the overlay helper, performs the editable install with `FETCHCONTENT_BASE_DIR=$TMPDIR/deps`, publishes Python overlays, and finally resets any tracked files that the patches modified.
+- Post-CUDA or ad-hoc tweaks can still be applied interactively inside the container, but prefer encoding them as `.diff` files or overlay directives so future rebuilds stay reproducible.
 
 ---
 
@@ -245,38 +208,10 @@ The complete development cycle with patch management:
 ```powershell
 # Remove the Windows podman context (optional)
 podman system connection rm wsl-podman-default -f
-  ---
 
-  ## Unresolved issues (2025-10-13)
-
-  Context from latest runs (Admin PS + VS Code terminal):
-
-  - OOBE prompt still appears during `wsl --install` of the Rocky `.wsl` base, but our new flow avoids launching the distro for config and proceeds to export. Admin run shows successful export to prepared tar: `C:\ProgramData\podman-images\Rocky-10-WSL-Base.latest.x86_64.prepared.tar`.
-  - In VS Code, the script keeps deleting the prepared tar as “incomplete” and relaunches elevation. This loop prevents `podman machine init` from progressing.
-  - `podman machine list` is empty, confirming init never completes.
-
-  Likely root causes:
-
-  1) Overly strict `Test-PreparedArchive` validation. The exported Rocky `.wsl` may not contain our expected `/etc/containers` or `/etc/ssh` markers because we intentionally avoid launching the distro (to bypass OOBE), so the pre-creation step was skipped. The archive is still valid for Podman import, but our validator flags it as incomplete and deletes it.
-  2) Loop between “prepared tar incomplete → re-prepare with elevation.” Admin flow completes export, but VS Code flow immediately deletes that tar again.
-
-  Action plan next session:
-
-  - Relax `Test-PreparedArchive` to accept the exported tar if it at least contains a minimal root filesystem (e.g., `/etc/os-release` present), or skip validation when the source was `.wsl` and export succeeded.
-  - Once relaxed, rerun helper without `-ClearCache`. Expect: prepared tar reused → `podman machine init` proceeds.
-  - After machine is up, continue with toolkit install and CDI generation as usual, then restart and GPU check.
-
-  Manual fallback (if needed):
-
-  ```powershell
-  # Use the prepared tar directly
-  pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -ImagePath 'C:\ProgramData\podman-images\Rocky-10-WSL-Base.latest.x86_64.prepared.tar'
+# Remove the Podman machine entirely
+pwsh extras/tools/enable-podman-latest-fedora-wsl-gpu.ps1 -Remove
 ```
-
-Notes:
-
-- We intentionally do not launch the temp distro to avoid OOBE; post-init configuration happens inside the Podman machine environment later.
-- If `wsl --export` succeeds, we should trust the tar and not delete it.
 
 ---
 
@@ -305,10 +240,10 @@ npx -y @smithery/cli@latest install @author/server-name --client vscode
 
 ---
 
-## Unregister the WSL distro
+## Remove the Podman machine
 
 ```powershell
-pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -Reset
+pwsh extras/tools/enable-podman-latest-fedora-wsl-gpu.ps1 -Remove
 ```
 
 ---
@@ -388,7 +323,7 @@ $env:PROTECTED_PATHS = "extras custom-dir"; pwsh extras/tools/fork-sync/sync_wit
 
 ```powershell
 # 1. Provision WSL2 + GPU
-pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -CacheRoot C:\podman-images
+pwsh extras/tools/enable-podman-latest-fedora-wsl-gpu.ps1 -Install
 
 # 2. Sync upstream (if needed)  
 pwsh extras/tools/fork-sync/sync_with_upstream.ps1
@@ -403,8 +338,8 @@ extras/podman/run.ps1 -Interactive
 **Reset everything**:
 
 ```powershell
-# Remove WSL distro
-pwsh extras/tools/enable-podman-rockylinux-wsl-gpu.ps1 -MachineName podman-machine-default -Reset
+# Remove Podman machine
+pwsh extras/tools/enable-podman-latest-fedora-wsl-gpu.ps1 -Remove
 
 # Remove Windows podman context (if created)
 podman system connection rm wsl-podman-default -f

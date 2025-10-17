@@ -457,7 +457,7 @@ finalize_and_run() {
 		fi
 		RUN_ARGS+=("$IMAGE_TAG" bash -lc "$(command_for_setup)")
 	elif [[ -n "$CMD" ]]; then
-		RUN_ARGS+=("$IMAGE_TAG" bash -lc "export LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/lib/wsl/drivers:$LD_LIBRARY_PATH; source /home/vllmuser/venv/bin/activate 2>/dev/null || true; $CMD")
+		RUN_ARGS+=("$IMAGE_TAG" bash -lc "export LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/lib/wsl/drivers:${LD_LIBRARY_PATH:-}; source /home/vllmuser/venv/bin/activate 2>/dev/null || true; $CMD")
 	else
 		RUN_ARGS+=(-it "$IMAGE_TAG" bash)
 	fi

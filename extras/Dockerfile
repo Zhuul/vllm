@@ -167,11 +167,11 @@ RUN pip install --upgrade pip setuptools>=61 wheel
 
 COPY requirements/ /tmp/requirements/
 
-# Install PyTorch nightly first (includes latest GPU arch support such as Blackwell sm_120 when present)
+# Install PyTorch nightly trio together to avoid transient version skew between packages
 ARG TORCH_CUDA_INDEX
-RUN pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/${TORCH_CUDA_INDEX}
-RUN pip install --pre torchvision --index-url https://download.pytorch.org/whl/nightly/${TORCH_CUDA_INDEX}
-RUN pip install --pre torchaudio --index-url https://download.pytorch.org/whl/nightly/${TORCH_CUDA_INDEX}
+RUN pip install --pre --upgrade \
+    torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/nightly/${TORCH_CUDA_INDEX}
 
 # Install PyAV for torchvision video I/O (read_video) compatibility
 RUN pip install --upgrade av
@@ -197,9 +197,7 @@ RUN set -euxo pipefail \
     && pip install --pre \
         -r /tmp/requirements_sanitized/build.txt \
         -r /tmp/requirements_sanitized/cuda.txt \
-        -r /tmp/requirements_sanitized/common.txt \
-    && pip install --pre --upgrade \
-        torch --index-url https://download.pytorch.org/whl/nightly/${TORCH_CUDA_INDEX}
+        -r /tmp/requirements_sanitized/common.txt
 
 # Install minimal development extras
 RUN pip install pytest pytest-asyncio ipython
