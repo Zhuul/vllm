@@ -91,18 +91,18 @@ wsl -d podman-machine-default -- bash -lc "ls -l /dev/dxg; nvidia-smi || true"
 
 ## Troubleshooting
 
-**Podman machine fails to start**
+### Podman machine fails to start
 
 - Run with elevation once so the helper can register CDI devices: `Start-Process pwsh -Verb RunAs -ArgumentList 'extras/tools/enable-podman-latest-fedora-wsl-gpu.ps1 -Install'`.
 - Use `-Remove` then `-Install` if initialization leaves the machine in a broken state.
 
-**GPU missing inside the container**
+### GPU missing inside the container
 
 - Confirm `nvidia-smi` works in Windows and WSL: `wsl -d podman-machine-default -- nvidia-smi`.
 - Re-run the helper with `-Update` to regenerate CDI specs.
 - Ensure Podman Desktop (or CLI) is ≥4.9 for CDI-aware GPU passthrough.
 
-**Container rebuild issues**
+### Container rebuild issues
 
 - `extras/podman/run.ps1 --build --no-cache` rebuilds the image from scratch.
 - Patches failing to apply: inspect `extras/patches/*.diff` and `extras/patches/python-overrides.txt` for path drift after upstream syncs.
