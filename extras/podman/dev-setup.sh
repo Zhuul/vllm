@@ -6,6 +6,13 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}" )" &>/dev/null && pwd)
 EXTRAS_DIR=$(cd -- "${SCRIPT_DIR}/.." &>/dev/null && pwd)
 
+export VLLM_PATCH_ENV=container
+BUILD_ENV_FILE="${EXTRAS_DIR}/configs/build.env"
+if [[ -f "$BUILD_ENV_FILE" ]]; then
+	# shellcheck disable=SC1090
+	. "$BUILD_ENV_FILE"
+fi
+
 try_exec() {
 	local target="$1"
 	if [[ -f "$target" ]]; then
