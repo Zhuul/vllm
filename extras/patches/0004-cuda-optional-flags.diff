@@ -2,7 +2,7 @@ diff --git a/CMakeLists.txt b/CMakeLists.txt
 index 5792dc082..6e8bb71c0 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -20,6 +20,38 @@ message(STATUS "Target device: ${VLLM_TARGET_DEVICE}")
+@@ -20,8 +20,35 @@ message(STATUS "Target device: ${VLLM_TARGET_DEVICE}")
  
  include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
  
@@ -38,63 +38,64 @@ index 5792dc082..6e8bb71c0 100644
  
  # Prevent installation of dependencies (cutlass) by default.
  install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY TRUE)" ALL_COMPONENTS)
-+diff --git a/cmake/utils.cmake b/cmake/utils.cmake
-+index 3d21d5746..afc703065 100644
-+--- a/cmake/utils.cmake
-++++ b/cmake/utils.cmake
-+@@ -485,8 +485,17 @@ function (define_gpu_extension_target GPU_MOD_NAME)
-+
-+
-+   target_compile_options(${GPU_MOD_NAME} PRIVATE
-+     $<$<COMPILE_LANGUAGE:${GPU_LANGUAGE}>:${GPU_COMPILE_FLAGS}>)
-+
-+-  target_compile_definitions(${GPU_MOD_NAME} PRIVATE
-+-    "-DTORCH_EXTENSION_NAME=${GPU_MOD_NAME}")
-++  set(_vllm_compile_definitions "-DTORCH_EXTENSION_NAME=${GPU_MOD_NAME}")
-++  get_property(_vllm_has_optional_globals GLOBAL PROPERTY VLLM_OPTIONAL_CUDA_DEFINES SET)
-++  if(_vllm_has_optional_globals)
-++    get_property(_vllm_optional_cuda_defines GLOBAL PROPERTY VLLM_OPTIONAL_CUDA_DEFINES)
-++    if(_vllm_optional_cuda_defines)
-++      foreach(_def ${_vllm_optional_cuda_defines})
-++        list(APPEND _vllm_compile_definitions "-D${_def}")
-++      endforeach()
-++    endif()
-++  endif()
-++  target_compile_definitions(${GPU_MOD_NAME} PRIVATE ${_vllm_compile_definitions})
+
+diff --git a/cmake/utils.cmake b/cmake/utils.cmake
+index 3d21d5746..afc703065 100644
+--- a/cmake/utils.cmake
++++ b/cmake/utils.cmake
+@@ -485,11 +485,20 @@ function (define_gpu_extension_target GPU_MOD_NAME)
+ 
+ 
+   target_compile_options(${GPU_MOD_NAME} PRIVATE
+     $<$<COMPILE_LANGUAGE:${GPU_LANGUAGE}>:${GPU_COMPILE_FLAGS}>)
+ 
+-  target_compile_definitions(${GPU_MOD_NAME} PRIVATE
+-    "-DTORCH_EXTENSION_NAME=${GPU_MOD_NAME}")
++  set(_vllm_compile_definitions "-DTORCH_EXTENSION_NAME=${GPU_MOD_NAME}")
++  get_property(_vllm_has_optional_globals GLOBAL PROPERTY VLLM_OPTIONAL_CUDA_DEFINES SET)
++  if(_vllm_has_optional_globals)
++    get_property(_vllm_optional_cuda_defines GLOBAL PROPERTY VLLM_OPTIONAL_CUDA_DEFINES)
++    if(_vllm_optional_cuda_defines)
++      foreach(_def ${_vllm_optional_cuda_defines})
++        list(APPEND _vllm_compile_definitions "-D${_def}")
++      endforeach()
++    endif()
++  endif()
++  target_compile_definitions(${GPU_MOD_NAME} PRIVATE ${_vllm_compile_definitions})
  
  
    target_link_libraries(${GPU_MOD_NAME} PRIVATE torch ${GPU_LIBRARIES})
  
-+diff --git a/setup.py b/setup.py
-+index 8656d12ad..f3bcd9a9d 100644
-+--- a/setup.py
-++++ b/setup.py
-+@@ -217,6 +217,28 @@ class cmake_build_ext(build_ext):
-+         # Make sure we use the nvcc from CUDA_HOME
-+         if _is_cuda():
-+             cmake_args += [f"-DCMAKE_CUDA_COMPILER={CUDA_HOME}/bin/nvcc"]
+diff --git a/setup.py b/setup.py
+index 8656d12ad..f3bcd9a9d 100644
+--- a/setup.py
++++ b/setup.py
+@@ -217,7 +217,28 @@ class cmake_build_ext(build_ext):
+         # Make sure we use the nvcc from CUDA_HOME
+         if _is_cuda():
+             cmake_args += [f"-DCMAKE_CUDA_COMPILER={CUDA_HOME}/bin/nvcc"]
+ 
++        cuda_optional_envs = {
++            "USE_CUBLAS": os.getenv("USE_CUBLAS"),
++            "USE_CUDNN": os.getenv("USE_CUDNN"),
++            "USE_CUFILE": os.getenv("USE_CUFILE"),
++            "USE_CUSPARSE": os.getenv("USE_CUSPARSE"),
++            "USE_CUSPARSELT": os.getenv("USE_CUSPARSELT"),
++            "USE_CUDSS": os.getenv("USE_CUDSS"),
++        }
++        for key, value in cuda_optional_envs.items():
++            if value is None:
++                continue
++            normalized = value.strip().lower()
++            if not normalized:
++                continue
++            if normalized in {"1", "on", "true", "yes"}:
++                cmake_args.append(f"-D{key}=ON")
++            elif normalized in {"0", "off", "false", "no"}:
++                cmake_args.append(f"-D{key}=OFF")
++            else:
++                cmake_args.append(f"-D{key}={value}")
 +
-++        cuda_optional_envs = {
-++            "USE_CUBLAS": os.getenv("USE_CUBLAS"),
-++            "USE_CUDNN": os.getenv("USE_CUDNN"),
-++            "USE_CUFILE": os.getenv("USE_CUFILE"),
-++            "USE_CUSPARSE": os.getenv("USE_CUSPARSE"),
-++            "USE_CUSPARSELT": os.getenv("USE_CUSPARSELT"),
-++            "USE_CUDSS": os.getenv("USE_CUDSS"),
-++        }
-++        for key, value in cuda_optional_envs.items():
-++            if value is None:
-++                continue
-++            normalized = value.strip().lower()
-++            if not normalized:
-++                continue
-++            if normalized in {"1", "on", "true", "yes"}:
-++                cmake_args.append(f"-D{key}=ON")
-++            elif normalized in {"0", "off", "false", "no"}:
-++                cmake_args.append(f"-D{key}=OFF")
-++            else:
-++                cmake_args.append(f"-D{key}={value}")
-++
          other_cmake_args = os.environ.get("CMAKE_ARGS")
          if other_cmake_args:
              cmake_args += other_cmake_args.split()
