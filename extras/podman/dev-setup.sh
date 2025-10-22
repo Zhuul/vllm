@@ -63,12 +63,12 @@ prepare_src_overlay() {
     if [[ -f "$overlay_root/extras/patches/apply_patches_overlay.sh" ]]; then
         (
             cd "$overlay_root"
-            PYTHON_PATCH_OVERLAY=0 VLLM_PATCH_ENV=container bash ./extras/patches/apply_patches_overlay.sh || true
+            PYTHON_PATCH_OVERLAY=0 VLLM_PATCH_ENV=container bash ./extras/patches/apply_patches_overlay.sh >&2 || true
         )
     elif [[ -f "$overlay_root/extras/patches/apply_patches.sh" ]]; then
         (
             cd "$overlay_root"
-            PYTHON_PATCH_OVERLAY=0 VLLM_PATCH_ENV=container bash ./extras/patches/apply_patches.sh || true
+            PYTHON_PATCH_OVERLAY=0 VLLM_PATCH_ENV=container bash ./extras/patches/apply_patches.sh >&2 || true
         )
     fi
 
@@ -78,7 +78,7 @@ prepare_src_overlay() {
         exit 1
     fi
 
-    echo "[dev-setup] Source overlay prepared at $overlay_root"
+    echo "[dev-setup] Source overlay prepared at $overlay_root" >&2
     printf '%s' "$overlay_root"
 }
 
@@ -287,6 +287,9 @@ if [[ -f requirements/common.txt ]]; then
 	pip install -r requirements/common.txt || true
 fi
 
+# Ensure build backend is available when using --no-build-isolation
+pip install -U "setuptools>=77,<80" setuptools-scm wheel packaging || true
+
 # Avoid slow git describe during setuptools_scm by providing a pretend version
 export SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION:-0+local}
 
@@ -297,20 +300,24 @@ echo "📦 Installing vLLM in editable mode from overlay..."
 # Use --no-use-pep517 and proper environment variables to handle filesystem restrictions
 # This avoids the need for dangerous monkey patching of core Python modules
 export PIP_DISABLE_PIP_VERSION_CHECK=1
-export SETUPTOOLS_USE_DISTUTILS=stdlib
+install_editable_from_overlay() {
+    cd "$SRC_OVERLAY_DIR"
+    FETCHCONTENT_BASE_DIR="$TMPDIR/deps" \
+        pip install -e . --no-deps --no-build-isolation --verbose \
+        --config-settings build-dir="$TMPDIR/vllm-build"
+}
 
-# Try editable install with conservative options for cross-platform compatibility
-(
-	cd "$SRC_OVERLAY_DIR"
-	FETCHCONTENT_BASE_DIR="$TMPDIR/deps" \
-		pip install -e . --no-deps --no-build-isolation --verbose \
-		--config-settings editable-legacy=true \
-		--config-settings build-dir="$TMPDIR/vllm-build"
-) || {
-		echo "❌ Editable install failed. This may be due to filesystem restrictions."
-		echo "💡 For WSL/Windows mounts, consider using bind mounts with proper options."
-		exit 1
-	}
+if ! install_editable_from_overlay; then
+    echo "? Editable install via pip failed; attempting legacy develop fallback" >&2
+    (
+        cd "$SRC_OVERLAY_DIR"
+        python setup.py develop
+    ) || {
+        echo "? Editable install failed. This may be due to filesystem restrictions." >&2
+        echo "?? For WSL/Windows mounts, consider using bind mounts with proper options." >&2
+        exit 1
+    }
+fi
 echo "✅ vLLM installed in editable mode (from overlay)."
 
 publish_python_overlays
