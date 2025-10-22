@@ -27,9 +27,21 @@ try_exec() {
 
 prepare_src_overlay() {
     local src_root="/workspace"
-    local overlay_root="${SRC_OVERLAY_ROOT:-/opt/work/src-overlay}"
-    mkdir -p "$overlay_root" || true
+    local overlay_root="${SRC_OVERLAY_ROOT:-}"
+    # Choose overlay root: prefer /opt/work if available and writable, else /tmp
+    if [[ -z "$overlay_root" ]]; then
+        if [[ -d /opt/work && -w /opt/work ]]; then
+            overlay_root="/opt/work/src-overlay"
+        else
+            overlay_root="/tmp/src-overlay"
+        fi
+    fi
+    if ! mkdir -p "$overlay_root" 2>/dev/null; then
+        overlay_root="/tmp/src-overlay"
+        mkdir -p "$overlay_root"
+    fi
 
+    # Mirror the workspace into overlay
     if command -v rsync >/dev/null 2>&1; then
         rsync -a --delete \
             --exclude='.git' \
@@ -47,11 +59,23 @@ prepare_src_overlay() {
             -cf - . ) | ( cd "$overlay_root" && tar -xf - )
     fi
 
-    if [[ -f "$overlay_root/extras/patches/apply_patches.sh" ]]; then
+    # Apply repo patches in overlay only
+    if [[ -f "$overlay_root/extras/patches/apply_patches_overlay.sh" ]]; then
+        (
+            cd "$overlay_root"
+            PYTHON_PATCH_OVERLAY=0 VLLM_PATCH_ENV=container bash ./extras/patches/apply_patches_overlay.sh || true
+        )
+    elif [[ -f "$overlay_root/extras/patches/apply_patches.sh" ]]; then
         (
             cd "$overlay_root"
             PYTHON_PATCH_OVERLAY=0 VLLM_PATCH_ENV=container bash ./extras/patches/apply_patches.sh || true
         )
+    fi
+
+    # Sanity check: must look like a Python package root
+    if [[ ! -f "$overlay_root/setup.py" && ! -f "$overlay_root/pyproject.toml" ]]; then
+        echo "[dev-setup] ERROR: overlay missing setup.py/pyproject at $overlay_root" >&2
+        exit 1
     fi
 
     echo "[dev-setup] Source overlay prepared at $overlay_root"
@@ -239,6 +263,8 @@ export SETUPTOOLS_SCM_IGNORE_VCS_ERRORS=${SETUPTOOLS_SCM_IGNORE_VCS_ERRORS:-1}
 
 # Prepare container-local patched source copy
 SRC_OVERLAY_DIR=$(prepare_src_overlay)
+# Point setuptools_scm at the overlay copy for version resolution
+export SETUPTOOLS_SCM_ROOT="$SRC_OVERLAY_DIR"
 
 # Prefer /opt/work/tmp (mounted volume) if available, else /tmp
 if [[ -d /opt/work ]]; then

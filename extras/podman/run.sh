@@ -229,12 +229,8 @@ TMP_RUN=$(mktemp /tmp/run-dev-setup.XXXX.sh)
 tr -d '\r' < ./extras/podman/dev-setup.sh > "$TMP_RUN" 2>/dev/null || cp ./extras/podman/dev-setup.sh "$TMP_RUN"
 chmod +x "$TMP_RUN" 2>/dev/null || true
 export VLLM_PATCH_ENV=container
+# Defer patching to dev-setup which builds a container-local overlay.
 export PYTHON_PATCH_OVERLAY=1
-if [ -x ./extras/patches/apply_patches_overlay.sh ]; then
-	bash ./extras/patches/apply_patches_overlay.sh || true
-elif [ -x ./extras/patches/apply_patches.sh ]; then
-	bash ./extras/patches/apply_patches.sh || true
-fi
 export TMPDIR=/opt/work/tmp
 export TMP=/opt/work/tmp
 export TEMP=/opt/work/tmp
