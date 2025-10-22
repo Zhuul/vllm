@@ -228,6 +228,7 @@ setup_script() {
 TMP_RUN=$(mktemp /tmp/run-dev-setup.XXXX.sh)
 tr -d '\r' < ./extras/podman/dev-setup.sh > "$TMP_RUN" 2>/dev/null || cp ./extras/podman/dev-setup.sh "$TMP_RUN"
 chmod +x "$TMP_RUN" 2>/dev/null || true
+export VLLM_PATCH_ENV=container
 export PYTHON_PATCH_OVERLAY=1
 if [ -x ./extras/patches/apply_patches_overlay.sh ]; then
 	bash ./extras/patches/apply_patches_overlay.sh || true

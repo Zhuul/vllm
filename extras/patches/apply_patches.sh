@@ -2,6 +2,12 @@
 # overlay test
 set -euo pipefail
 
+# Enforce container-only usage unless explicitly overridden
+if [[ "${VLLM_PATCH_ENV:-}" != "container" ]]; then
+  echo "[patches] Skipping host invocation (set VLLM_PATCH_ENV=container inside container)" >&2
+  exit 0
+fi
+
 # Normalize CRLF and re-exec if needed
 if grep -q $'\r' "$0" 2>/dev/null; then
   TMP_SELF=$(mktemp /tmp/apply_patches_self.XXXXXX.sh)

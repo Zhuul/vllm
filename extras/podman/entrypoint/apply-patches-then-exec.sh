@@ -3,6 +3,8 @@ set -euo pipefail
 
 echo "[entrypoint] start"
 
+export VLLM_PATCH_ENV=${VLLM_PATCH_ENV:-container}
+
 # Normalize CRLF in podman helper scripts (best effort)
 for dir in /workspace/extras/podman /workspace/extras/patches; do
   [[ -d "$dir" ]] || continue
