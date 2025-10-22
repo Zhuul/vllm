@@ -25,6 +25,39 @@ try_exec() {
 	fi
 }
 
+prepare_src_overlay() {
+    local src_root="/workspace"
+    local overlay_root="${SRC_OVERLAY_ROOT:-/opt/work/src-overlay}"
+    mkdir -p "$overlay_root" || true
+
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --delete \
+            --exclude='.git' \
+            --exclude='.venv' --exclude='venv' \
+            --exclude='__pycache__' \
+            --exclude='*.egg-info' \
+            --exclude='build' --exclude='dist' \
+            "$src_root/" "$overlay_root/"
+    else
+        ( cd "$src_root" && tar --exclude-vcs \
+            --exclude='.venv' --exclude='venv' \
+            --exclude='__pycache__' \
+            --exclude='*.egg-info' \
+            --exclude='build' --exclude='dist' \
+            -cf - . ) | ( cd "$overlay_root" && tar -xf - )
+    fi
+
+    if [[ -f "$overlay_root/extras/patches/apply_patches.sh" ]]; then
+        (
+            cd "$overlay_root"
+            PYTHON_PATCH_OVERLAY=0 VLLM_PATCH_ENV=container bash ./extras/patches/apply_patches.sh || true
+        )
+    fi
+
+    echo "[dev-setup] Source overlay prepared at $overlay_root"
+    printf '%s' "$overlay_root"
+}
+
 apply_overlay_transform() {
 	local name="$1"
 	local root="$2"
@@ -204,10 +237,8 @@ fi
 export SETUPTOOLS_SCM_ROOT=${SETUPTOOLS_SCM_ROOT:-/workspace}
 export SETUPTOOLS_SCM_IGNORE_VCS_ERRORS=${SETUPTOOLS_SCM_IGNORE_VCS_ERRORS:-1}
 
-# Ensure patches applied before building
-if command -v apply-vllm-patches >/dev/null 2>&1; then
-	PYTHON_PATCH_OVERLAY=1 apply-vllm-patches || true
-fi
+# Prepare container-local patched source copy
+SRC_OVERLAY_DIR=$(prepare_src_overlay)
 
 # Prefer /opt/work/tmp (mounted volume) if available, else /tmp
 if [[ -d /opt/work ]]; then
@@ -244,7 +275,7 @@ export SETUPTOOLS_USE_DISTUTILS=stdlib
 
 # Try editable install with conservative options for cross-platform compatibility
 FETCHCONTENT_BASE_DIR="$TMPDIR/deps" \
-	pip install -e . --no-deps --no-build-isolation --verbose \
+	pip install -e "$SRC_OVERLAY_DIR" --no-deps --no-build-isolation --verbose \
 	--config-settings editable-legacy=true \
 	--config-settings build-dir="$TMPDIR/vllm-build" || {
 		echo "❌ Editable install failed. This may be due to filesystem restrictions."
@@ -255,10 +286,7 @@ echo "✅ vLLM installed in editable mode."
 
 publish_python_overlays
 
-if [[ -f ./extras/patches/reset_patched_files.sh ]]; then
-	PATCH_TRACK_FILE=${PATCH_TRACK_FILE:-/opt/work/tmp/vllm_patched_files.txt} \
-		bash ./extras/patches/reset_patched_files.sh || true
-fi
+# No reset needed: host workspace remained clean; overlay keeps patches
 
 if command -v git >/dev/null 2>&1; then
 	if git status --porcelain --untracked-files=no | grep -q '.'; then
