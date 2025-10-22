@@ -195,10 +195,10 @@ The complete development cycle with patch management:
 
 **Patch Management Notes**:
 
-- Pre-CUDA overlays live in `extras/patches/python-overrides.txt`; `dev-setup.sh` copies listed files into `/opt/work/python-overrides` and registers a `.pth` so they shadow upstream modules without leaving Git diffs.
-- Container startup runs `extras/podman/entrypoint/apply-patches-then-exec.sh`, which normalizes line endings and invokes `extras/patches/apply_patches_overlay.sh` to `git apply` every `extras/patches/*.diff` (including `0003-qutlass-fetchcontent-base.diff`) before the main command.
-- `apply_patches_overlay.sh` records touched files in `/opt/work/tmp/vllm_patched_files.txt` during overlay mode so `reset_patched_files.sh` can `git checkout` them after setup, keeping the worktree clean.
-- `run.ps1 -Setup` re-runs the overlay helper, performs the editable install with `FETCHCONTENT_BASE_DIR=$TMPDIR/deps`, publishes Python overlays, and finally resets any tracked files that the patches modified.
+- Pre-CUDA overlays live in `extras/patches/python-overrides.txt`; `dev-setup.sh` copies listed files into a container-local overlay directory (defaults to `/opt/work/python-overrides`) and registers a `.pth` so they shadow upstream modules without leaving Git diffs.
+- Container startup entrypoint normalizes line endings and, by default, does not apply any `.diff` patches to the bind-mounted `/workspace` (set `APPLY_PATCHES_ON_START=1` to opt-in).
+- `run.ps1 -Setup` invokes `extras/podman/dev-setup.sh`, which mirrors `/workspace` into a container-local source overlay (e.g., `/opt/work/src-overlay` or `/tmp/src-overlay`), applies all `extras/patches/*.diff` inside that overlay, and installs vLLM in editable mode from the overlay with `FETCHCONTENT_BASE_DIR=$TMPDIR/deps`.
+- No reset step is needed anymore: the host worktree remains pristine; all patching occurs in the container overlay.
 - Post-CUDA or ad-hoc tweaks can still be applied interactively inside the container, but prefer encoding them as `.diff` files or overlay directives so future rebuilds stay reproducible.
 
 ---

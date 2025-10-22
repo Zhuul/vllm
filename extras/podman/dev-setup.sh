@@ -293,22 +293,25 @@ export SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION:-0+local}
 # Avoid slow git describe during setuptools_scm by providing a pretend version
 export SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION:-0+local}
 
-echo "📦 Installing vLLM in editable mode..."
+echo "📦 Installing vLLM in editable mode from overlay..."
 # Use --no-use-pep517 and proper environment variables to handle filesystem restrictions
 # This avoids the need for dangerous monkey patching of core Python modules
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 export SETUPTOOLS_USE_DISTUTILS=stdlib
 
 # Try editable install with conservative options for cross-platform compatibility
-FETCHCONTENT_BASE_DIR="$TMPDIR/deps" \
-	pip install -e "$SRC_OVERLAY_DIR" --no-deps --no-build-isolation --verbose \
-	--config-settings editable-legacy=true \
-	--config-settings build-dir="$TMPDIR/vllm-build" || {
+(
+	cd "$SRC_OVERLAY_DIR"
+	FETCHCONTENT_BASE_DIR="$TMPDIR/deps" \
+		pip install -e . --no-deps --no-build-isolation --verbose \
+		--config-settings editable-legacy=true \
+		--config-settings build-dir="$TMPDIR/vllm-build"
+) || {
 		echo "❌ Editable install failed. This may be due to filesystem restrictions."
 		echo "💡 For WSL/Windows mounts, consider using bind mounts with proper options."
 		exit 1
 	}
-echo "✅ vLLM installed in editable mode."
+echo "✅ vLLM installed in editable mode (from overlay)."
 
 publish_python_overlays
 
