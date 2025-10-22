@@ -26,17 +26,24 @@ export PYTHON_PATCH_OVERLAY=${PYTHON_PATCH_OVERLAY:-1}
 OVERLAY_HELPER=/workspace/extras/patches/apply_patches_overlay.sh
 LEGACY_HELPER=/workspace/extras/patches/apply_patches.sh
 
-if [[ -f "$OVERLAY_HELPER" ]]; then
-  echo "[entrypoint] applying patches via overlay helper (overlay=$PYTHON_PATCH_OVERLAY)"
-  bash "$OVERLAY_HELPER" || true
-elif command -v apply-vllm-patches >/dev/null 2>&1; then
-  echo "[entrypoint] applying patches via helper (overlay=$PYTHON_PATCH_OVERLAY)"
-  apply-vllm-patches || true
-elif [[ -f "$LEGACY_HELPER" ]]; then
-  echo "[entrypoint] applying patches via workspace script"
-  bash "$LEGACY_HELPER" || true
+# Only apply patches at container start when explicitly requested.
+# This avoids mutating the bind-mounted workspace during interactive shells
+# or image-only builds. Dev setup will apply and then reset as needed.
+if [[ "${APPLY_PATCHES_ON_START:-0}" == "1" ]]; then
+  if [[ -f "$OVERLAY_HELPER" ]]; then
+    echo "[entrypoint] applying patches via overlay helper (overlay=$PYTHON_PATCH_OVERLAY)"
+    bash "$OVERLAY_HELPER" || true
+  elif command -v apply-vllm-patches >/dev/null 2>&1; then
+    echo "[entrypoint] applying patches via helper (overlay=$PYTHON_PATCH_OVERLAY)"
+    apply-vllm-patches || true
+  elif [[ -f "$LEGACY_HELPER" ]]; then
+    echo "[entrypoint] applying patches via workspace script"
+    bash "$LEGACY_HELPER" || true
+  else
+    echo "[entrypoint] no patch helper found" >&2
+  fi
 else
-  echo "[entrypoint] no patch helper found" >&2
+  echo "[entrypoint] skipping patch application at start (APPLY_PATCHES_ON_START=${APPLY_PATCHES_ON_START:-0})"
 fi
 
 if command -v git >/dev/null 2>&1; then

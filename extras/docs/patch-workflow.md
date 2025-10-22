@@ -20,7 +20,10 @@ running on GitHub and the local steps you take before hacking on the codebase.
 - Launching `extras/podman/run.ps1 -Setup` (or `run.sh` on Linux) builds the dev container if
   needed and starts it with the entrypoint `extras/podman/entrypoint/apply-patches-then-exec.sh`.
 - The entrypoint normalizes Windows line endings, configures `git` to trust the mounted
-  workspace, and invokes `extras/patches/apply_patches_overlay.sh` before any build commands run.
+  workspace, and can invoke `extras/patches/apply_patches_overlay.sh` before any build commands run.
+  By default this is disabled to avoid mutating the bind-mounted workspace in interactive shells
+  or image-only runs; enable it by setting `APPLY_PATCHES_ON_START=1` if you really need pre-setup
+  patch application.
 - Overlay definitions live in `extras/patches/python-overrides.txt`. Each line copies a file from
   the repository into an overlay directory inside the container (defaults to
   `/opt/work/python-overrides`) and can apply transforms (for example, adapting

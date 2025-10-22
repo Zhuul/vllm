@@ -405,6 +405,9 @@ prepare_run_args() {
 
 	ENV_VARS=()
 	add_env_var 'ENGINE=podman'
+	# Prevent entrypoint from applying patches on startup by default.
+	# Dev setup invokes patching explicitly and then restores a clean tree.
+	add_env_var 'APPLY_PATCHES_ON_START=0'
 	add_env_var "PATCH_OVERLAY_WARN_LIMIT=${PATCH_OVERLAY_WARN_LIMIT:-0}"
 	add_env_var "NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}"
 	add_env_var "NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}"
