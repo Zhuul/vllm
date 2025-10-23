@@ -2,10 +2,10 @@ diff --git a/CMakeLists.txt b/CMakeLists.txt
 index 5792dc082..6e8bb71c0 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -20,8 +20,35 @@ message(STATUS "Target device: ${VLLM_TARGET_DEVICE}")
- 
+@@ -20,8 +20,31 @@ message(STATUS "Target device: ${VLLM_TARGET_DEVICE}")
+
  include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
- 
+
 +set(_VLLM_OPTIONAL_CUDA_LIBS
 +  CUBLAS
 +  CUDNN
@@ -14,15 +14,11 @@ index 5792dc082..6e8bb71c0 100644
 +  CUSPARSELT
 +  CUDSS)
 +set(VLLM_ENABLED_OPTIONAL_CUDA_LIBS)
-+set(VLLM_OPTIONAL_CUDA_DEFINES)
 +foreach(_lib ${_VLLM_OPTIONAL_CUDA_LIBS})
 +  set(_opt "USE_${_lib}")
 +  option(${_opt} "Enable optional CUDA component ${_lib}" ON)
 +  if(${_opt})
 +    list(APPEND VLLM_ENABLED_OPTIONAL_CUDA_LIBS ${_lib})
-+    list(APPEND VLLM_OPTIONAL_CUDA_DEFINES "${_opt}=1")
-+  else()
-+    list(APPEND VLLM_OPTIONAL_CUDA_DEFINES "${_opt}=0")
 +  endif()
 +endforeach()
 +if(VLLM_ENABLED_OPTIONAL_CUDA_LIBS)
@@ -31,41 +27,13 @@ index 5792dc082..6e8bb71c0 100644
 +else()
 +  message(STATUS "Optional CUDA components enabled: (none)")
 +endif()
-+set_property(GLOBAL PROPERTY VLLM_OPTIONAL_CUDA_DEFINES "${VLLM_OPTIONAL_CUDA_DEFINES}")
 +
  # Suppress potential warnings about unused manually-specified variables
  set(ignoreMe "${VLLM_PYTHON_PATH}")
- 
+
  # Prevent installation of dependencies (cutlass) by default.
  install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY TRUE)" ALL_COMPONENTS)
 
-diff --git a/cmake/utils.cmake b/cmake/utils.cmake
-index 3d21d5746..afc703065 100644
---- a/cmake/utils.cmake
-+++ b/cmake/utils.cmake
-@@ -485,11 +485,20 @@ function (define_gpu_extension_target GPU_MOD_NAME)
- 
- 
-   target_compile_options(${GPU_MOD_NAME} PRIVATE
-     $<$<COMPILE_LANGUAGE:${GPU_LANGUAGE}>:${GPU_COMPILE_FLAGS}>)
- 
--  target_compile_definitions(${GPU_MOD_NAME} PRIVATE
--    "-DTORCH_EXTENSION_NAME=${GPU_MOD_NAME}")
-+  set(_vllm_compile_definitions "-DTORCH_EXTENSION_NAME=${GPU_MOD_NAME}")
-+  get_property(_vllm_has_optional_globals GLOBAL PROPERTY VLLM_OPTIONAL_CUDA_DEFINES SET)
-+  if(_vllm_has_optional_globals)
-+    get_property(_vllm_optional_cuda_defines GLOBAL PROPERTY VLLM_OPTIONAL_CUDA_DEFINES)
-+    if(_vllm_optional_cuda_defines)
-+      foreach(_def ${_vllm_optional_cuda_defines})
-+        list(APPEND _vllm_compile_definitions "-D${_def}")
-+      endforeach()
-+    endif()
-+  endif()
-+  target_compile_definitions(${GPU_MOD_NAME} PRIVATE ${_vllm_compile_definitions})
- 
- 
-   target_link_libraries(${GPU_MOD_NAME} PRIVATE torch ${GPU_LIBRARIES})
- 
 diff --git a/setup.py b/setup.py
 index 8656d12ad..f3bcd9a9d 100644
 --- a/setup.py
@@ -74,7 +42,7 @@ index 8656d12ad..f3bcd9a9d 100644
          # Make sure we use the nvcc from CUDA_HOME
          if _is_cuda():
              cmake_args += [f"-DCMAKE_CUDA_COMPILER={CUDA_HOME}/bin/nvcc"]
- 
+
 +        cuda_optional_envs = {
 +            "USE_CUBLAS": os.getenv("USE_CUBLAS"),
 +            "USE_CUDNN": os.getenv("USE_CUDNN"),
