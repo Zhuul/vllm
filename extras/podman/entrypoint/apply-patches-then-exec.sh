@@ -29,16 +29,20 @@ LEGACY_HELPER=/workspace/extras/patches/apply_patches.sh
 # Only apply patches at container start when explicitly requested.
 # This avoids mutating the bind-mounted workspace during interactive shells
 # or image-only builds. Dev setup will apply and then reset as needed.
+PATCH_RAN=0
 if [[ "${APPLY_PATCHES_ON_START:-0}" == "1" ]]; then
   if [[ -f "$OVERLAY_HELPER" ]]; then
     echo "[entrypoint] applying patches via overlay helper (overlay=$PYTHON_PATCH_OVERLAY)"
     bash "$OVERLAY_HELPER" || true
+    PATCH_RAN=1
   elif command -v apply-vllm-patches >/dev/null 2>&1; then
     echo "[entrypoint] applying patches via helper (overlay=$PYTHON_PATCH_OVERLAY)"
     apply-vllm-patches || true
+    PATCH_RAN=1
   elif [[ -f "$LEGACY_HELPER" ]]; then
     echo "[entrypoint] applying patches via workspace script"
     bash "$LEGACY_HELPER" || true
+    PATCH_RAN=1
   else
     echo "[entrypoint] no patch helper found" >&2
   fi
@@ -46,7 +50,7 @@ else
   echo "[entrypoint] skipping patch application at start (APPLY_PATCHES_ON_START=${APPLY_PATCHES_ON_START:-0})"
 fi
 
-if command -v git >/dev/null 2>&1; then
+if command -v git >/dev/null 2>&1 && [[ $PATCH_RAN -eq 1 ]]; then
   dirty=$(git status --porcelain --untracked-files=no)
   if [[ -n "$dirty" ]]; then
     warn_limit=${PATCH_OVERLAY_WARN_LIMIT:-20}

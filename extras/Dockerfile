@@ -5,6 +5,11 @@
 ARG CUDA_VERSION=13.0.1
 ARG UBI_VERSION=10
 ARG TORCH_CUDA_INDEX=cu130
+# Torch installation knobs
+ARG TORCH_CHANNEL=nightly
+ARG TORCH_VERSION=""
+ARG TORCHVISION_VERSION=""
+ARG TORCHAUDIO_VERSION=""
 # Base flavor for CUDA image: e.g. 'rockylinux9' (default) or 'ubi9'
 ARG BASE_FLAVOR=rockylinux10
 ARG INSTALL_CUDA_OPTIONAL_DEVEL=1
@@ -169,9 +174,23 @@ COPY requirements/ /tmp/requirements/
 
 # Install PyTorch nightly trio together to avoid transient version skew between packages
 ARG TORCH_CUDA_INDEX
-RUN pip install --pre --upgrade \
-    torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/nightly/${TORCH_CUDA_INDEX}
+# Ensure these build args are in scope for the pip install step below
+ARG TORCH_CHANNEL
+ARG TORCH_VERSION
+ARG TORCHVISION_VERSION
+ARG TORCHAUDIO_VERSION
+RUN set -euxo pipefail \
+    && INDEX_BASE="https://download.pytorch.org/whl" \
+    && if [ "${TORCH_CHANNEL}" = "nightly" ]; then CHAN="nightly/"; PRE="--pre"; else CHAN=""; PRE=""; fi \
+    && TORCH_SPEC=${TORCH_VERSION:+torch==${TORCH_VERSION}} \
+    && TORCH_SPEC=${TORCH_SPEC:-torch} \
+    && TV_SPEC=${TORCHVISION_VERSION:+torchvision==${TORCHVISION_VERSION}} \
+    && TV_SPEC=${TV_SPEC:-torchvision} \
+    && TA_SPEC=${TORCHAUDIO_VERSION:+torchaudio==${TORCHAUDIO_VERSION}} \
+    && TA_SPEC=${TA_SPEC:-torchaudio} \
+    && pip install ${PRE} --upgrade \
+        "$TORCH_SPEC" "$TV_SPEC" "$TA_SPEC" \
+        --index-url "${INDEX_BASE}/${CHAN}${TORCH_CUDA_INDEX}"
 
 # Install PyAV for torchvision video I/O (read_video) compatibility
 RUN pip install --upgrade av

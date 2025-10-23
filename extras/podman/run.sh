@@ -146,9 +146,15 @@ load_build_config() {
 	TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-$(docker_arg_default TORCH_CUDA_ARCH_LIST '8.0 8.6 8.9 9.0 12.0 13.0')}"
 	CUDA_ARCHS="${CUDA_ARCHS:-$(docker_arg_default CUDA_ARCHS '80;86;89;90;120')}"
 	INSTALL_CUDA_OPTIONAL_DEVEL="${INSTALL_CUDA_OPTIONAL_DEVEL:-$(docker_arg_default INSTALL_CUDA_OPTIONAL_DEVEL 1)}"
-	CUDNN_FLAVOR="${CUDNN_FLAVOR:-$(docker_arg_default CUDNN_FLAVOR 9)}"
-	REQUIRE_FFMPEG="${REQUIRE_FFMPEG:-$(docker_arg_default REQUIRE_FFMPEG 1)}"
-	TORCH_CUDA_INDEX="${TORCH_CUDA_INDEX:-$(derive_torch_index "$CUDA_VERSION")}" 
+  CUDNN_FLAVOR="${CUDNN_FLAVOR:-$(docker_arg_default CUDNN_FLAVOR 9)}"
+  REQUIRE_FFMPEG="${REQUIRE_FFMPEG:-$(docker_arg_default REQUIRE_FFMPEG 1)}"
+  TORCH_CUDA_INDEX="${TORCH_CUDA_INDEX:-$(derive_torch_index "$CUDA_VERSION")}" 
+
+  # Optional Torch channel and versions (from build.env)
+  TORCH_CHANNEL="${TORCH_CHANNEL:-$(docker_arg_default TORCH_CHANNEL nightly)}"
+  TORCH_VERSION="${TORCH_VERSION:-}"                      # optional pin
+  TORCHVISION_VERSION="${TORCHVISION_VERSION:-}"          # optional pin
+  TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-}"            # optional pin
 }
 
 ensure_podman() {
@@ -190,7 +196,7 @@ build_image_if_requested() {
 	[[ $BUILD -eq 1 ]] || return 0
 	echo "🔨 Building image (honoring extras/configs/build.env)..."
 	load_build_config
-	local args=(build -f extras/Dockerfile
+  local args=(build -f extras/Dockerfile
 		--build-arg "CUDA_VERSION=$CUDA_VERSION"
 		--build-arg "BASE_FLAVOR=$BASE_FLAVOR"
 		--build-arg "TORCH_CUDA_INDEX=$TORCH_CUDA_INDEX"
@@ -198,9 +204,13 @@ build_image_if_requested() {
 		--build-arg "CUDA_ARCHS=$CUDA_ARCHS"
 		--build-arg "INSTALL_CUDA_OPTIONAL_DEVEL=$INSTALL_CUDA_OPTIONAL_DEVEL"
 		--build-arg "CUDNN_FLAVOR=$CUDNN_FLAVOR"
-		--build-arg "REQUIRE_FFMPEG=$REQUIRE_FFMPEG"
-		-t "$IMAGE_TAG"
-		"$SOURCE_DIR_NATIVE")
+      --build-arg "REQUIRE_FFMPEG=$REQUIRE_FFMPEG"
+      --build-arg "TORCH_CHANNEL=$TORCH_CHANNEL"
+      --build-arg "TORCH_VERSION=$TORCH_VERSION"
+      --build-arg "TORCHVISION_VERSION=$TORCHVISION_VERSION"
+      --build-arg "TORCHAUDIO_VERSION=$TORCHAUDIO_VERSION"
+      -t "$IMAGE_TAG"
+      "$SOURCE_DIR_NATIVE")
 	if [[ $NO_CACHE -eq 1 ]]; then
 		args=(build --no-cache "${args[@]:1}")
 	fi
@@ -401,6 +411,8 @@ prepare_run_args() {
 
 	ENV_VARS=()
 	add_env_var 'ENGINE=podman'
+	# Enable cuDNN prefill by default; user can override with --env
+	add_env_var "VLLM_USE_CUDNN_PREFILL=${VLLM_USE_CUDNN_PREFILL:-1}"
 	# Prevent entrypoint from applying patches on startup by default.
 	# Dev setup invokes patching explicitly and then restores a clean tree.
 	add_env_var 'APPLY_PATCHES_ON_START=0'
