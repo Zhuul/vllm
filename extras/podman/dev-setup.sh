@@ -305,6 +305,18 @@ echo "📦 Installing vLLM in editable mode from overlay..."
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 install_editable_from_overlay() {
     cd "$SRC_OVERLAY_DIR"
+    # Provide CMake hints for cuDNN so detection can succeed if headers/libs are present.
+    # Do not overwrite if user already set them via CMAKE_ARGS.
+    CMAKE_ARGS_INIT="${CMAKE_ARGS:-}"
+    case " ${CMAKE_ARGS_INIT} " in
+      *" -DCUDNN_INCLUDE_PATH="*) : ;;
+      *) CMAKE_ARGS_INIT+=" -DCUDNN_INCLUDE_PATH=/usr/include" ;;
+    esac
+    case " ${CMAKE_ARGS_INIT} " in
+      *" -DCUDNN_LIBRARY_PATH="*) : ;;
+      *) CMAKE_ARGS_INIT+=" -DCUDNN_LIBRARY_PATH=/usr/lib64" ;;
+    esac
+    export CMAKE_ARGS="${CMAKE_ARGS_INIT}"
     FETCHCONTENT_BASE_DIR="$TMPDIR/deps" \
         pip install -e . --no-deps --no-build-isolation --verbose \
         --config-settings build-dir="$TMPDIR/vllm-build"
