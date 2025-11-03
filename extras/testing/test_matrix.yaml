@@ -1,0 +1,35 @@
+profiles:
+  baseline:
+    suites:
+      - smoke
+  patched:
+    suites:
+      - smoke
+
+suites:
+  smoke:
+    description: Lightweight validation that exercises CUDA bindings and API surface.
+    commands:
+      - name: unit-tests
+        cmd: pytest tests/test_vllm_port.py -q
+        workdir: /workspace
+        timeout: 900
+        env:
+          PYTHONUNBUFFERED: "1"
+          CUDA_VISIBLE_DEVICES: "0"
+
+  benchmarks:
+    description: Minimal throughput benchmark (opt-in).
+    commands:
+      - name: throughput-qwen-tiny
+        cmd: >
+          python benchmarks/benchmark_throughput.py
+          --model Qwen/Qwen2.5-0.5B
+          --tensor-parallel-size 1
+          --batch-size 4
+          --warmup 4
+          --steps 16
+        workdir: /workspace
+        timeout: 1800
+        env:
+          CUDA_VISIBLE_DEVICES: "0"

@@ -47,6 +47,9 @@ WORK_VOLUME=""
 WORK_DIR_HOST=""
 ENV_ENTRIES=()
 SECRET_ENV_FILES=()
+MODELSCOPE_CONFIG_LOADED=0
+MODELSCOPE_MOUNTS=()
+MODELSCOPE_ENV_VARS=()
 
 # Build/config placeholders (populated lazily)
 CUDA_VERSION=""
@@ -155,6 +158,22 @@ load_build_config() {
   TORCH_VERSION="${TORCH_VERSION:-}"                      # optional pin
   TORCHVISION_VERSION="${TORCHVISION_VERSION:-}"          # optional pin
   TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-}"            # optional pin
+}
+
+load_modelscope_config() {
+	[[ $MODELSCOPE_CONFIG_LOADED -eq 1 ]] && return
+	MODELSCOPE_CONFIG_LOADED=1
+	local cfg="extras/configs/modelscope.env"
+	if [[ -f "$cfg" ]]; then
+		set +u
+		# shellcheck disable=SC1090
+		source "$cfg"
+		set -u
+	fi
+
+	if [[ ${#MODELSCOPE_MOUNTS[@]:-0} -eq 0 && -n "${MODELSCOPE_CACHE_VOLUME:-}" ]]; then
+		MODELSCOPE_MOUNTS=("$MODELSCOPE_CACHE_VOLUME")
+	fi
 }
 
 ensure_podman() {
@@ -367,6 +386,54 @@ collect_secret_env_files() {
 	done < <(find "$secrets_dir" -maxdepth 1 -type f -name '*.env' ! -name '*.env.example' -print0 2>/dev/null)
 }
 
+apply_modelscope_mounts() {
+	load_modelscope_config
+	local mounts=("${MODELSCOPE_MOUNTS[@]:-}")
+	[[ ${#mounts[@]} -gt 0 ]] || return
+	for entry in "${mounts[@]}"; do
+		[[ -n "$entry" ]] || continue
+		local src target opts extra
+		IFS=':' read -r src target opts extra <<<"$entry"
+		if [[ -n "$extra" ]]; then
+			err "⚠️  Ignoring ModelScope mount with too many segments: $entry"
+			continue
+		fi
+		if [[ -z "$src" || -z "$target" ]]; then
+			err "⚠️  Ignoring invalid ModelScope mount (src/target missing): $entry"
+			continue
+		fi
+		local mount_arg
+		case "$src" in
+			/*)
+				local host_spec
+				host_spec="$(convert_host_path "$src")"
+				if [[ -z "$opts" ]]; then
+					mount_arg="${host_spec}:${target}:Z"
+				else
+					mount_arg="${host_spec}:${target}:${opts}"
+				fi
+				;;
+			[A-Za-z]:*)
+				local host_spec
+				host_spec="$(convert_host_path "$src")"
+				if [[ -z "$opts" ]]; then
+					mount_arg="${host_spec}:${target}:Z"
+				else
+					mount_arg="${host_spec}:${target}:${opts}"
+				fi
+				;;
+			*)
+				if [[ -z "$opts" ]]; then
+					mount_arg="${src}:${target}"
+				else
+					mount_arg="${src}:${target}:${opts}"
+				fi
+				;;
+		esac
+		RUN_ARGS+=(-v "$mount_arg")
+	done
+}
+
 prepare_run_args() {
 	RUN_ARGS=(run --rm --security-opt=label=disable)
 	if [[ -z "${VLLM_DISABLE_CDI:-}" ]]; then
@@ -434,6 +501,11 @@ prepare_run_args() {
 
 	collect_fa3_envs
 	collect_secret_env_files
+	load_modelscope_config
+	for kv in "${MODELSCOPE_ENV_VARS[@]:-}"; do
+		add_env_var "$kv"
+	done
+	apply_modelscope_mounts
 }
 
 command_for_gpu_check() {
