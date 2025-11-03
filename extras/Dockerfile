@@ -218,6 +218,9 @@ RUN set -euxo pipefail \
         -r /tmp/requirements_sanitized/cuda.txt \
         -r /tmp/requirements_sanitized/common.txt
 
+# Provide ModelScope tooling and YAML support for model automation helpers
+RUN pip install --upgrade pyyaml modelscope
+
 # Install minimal development extras
 RUN pip install pytest pytest-asyncio ipython
 
