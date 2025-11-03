@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Compare JSON outputs produced by run_tests.py."""
 
 from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Dict, Mapping, Sequence, Tuple
 
 
-def load_results(path: Path) -> Mapping[Tuple[str, str], Mapping[str, object]]:
+def load_results(path: Path) -> Mapping[tuple[str, str], Mapping[str, object]]:
     if not path.exists():
         raise SystemExit(f"Results file not found: {path}")
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
         raise SystemExit(f"Unexpected results format in {path}")
-    index: Dict[Tuple[str, str], Mapping[str, object]] = {}
+    index: dict[tuple[str, str], Mapping[str, object]] = {}
     for item in payload:
         if not isinstance(item, Mapping):
             raise SystemExit(f"Invalid entry in {path}")
@@ -32,7 +34,10 @@ def describe(entry: Mapping[str, object]) -> str:
     return f"status={status} duration={float(duration):.2f}s rc={rc}"
 
 
-def compare(baseline: Mapping[Tuple[str, str], Mapping[str, object]], patched: Mapping[Tuple[str, str], Mapping[str, object]]) -> None:
+def compare(
+    baseline: Mapping[tuple[str, str], Mapping[str, object]],
+    patched: Mapping[tuple[str, str], Mapping[str, object]],
+) -> None:
     all_keys = sorted(set(baseline.keys()) | set(patched.keys()))
     regressions = 0
     for key in all_keys:
@@ -65,13 +70,15 @@ def compare(baseline: Mapping[Tuple[str, str], Mapping[str, object]], patched: M
 
         if base_status != patch_status:
             print(
-                f"[!] {header} status regression: base={base_status} patched={patch_status} "
+                f"[!] {header} status regression: base={base_status} "
+                f"patched={patch_status} "
                 f"(base {describe(base)} | patched {describe(patch)})"
             )
             regressions += 1
         elif patch_status != "passed":
             print(
-                f"[~] {header} still failing: base={describe(base)} | patched={describe(patch)}"
+                f"[~] {header} still failing: base={describe(base)} | "
+                f"patched={describe(patch)}"
             )
             regressions += 1
 
@@ -83,8 +90,16 @@ def compare(baseline: Mapping[Tuple[str, str], Mapping[str, object]], patched: M
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", required=True, help="JSON results from baseline run")
-    parser.add_argument("--patched", required=True, help="JSON results from patched run")
+    parser.add_argument(
+        "--baseline",
+        required=True,
+        help="JSON results from baseline run",
+    )
+    parser.add_argument(
+        "--patched",
+        required=True,
+        help="JSON results from patched run",
+    )
     return parser
 
 

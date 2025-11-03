@@ -1,4 +1,4 @@
-## Extras Testing Harness
+# Extras Testing Harness
 
 Utilities in this directory wrap common test and benchmark flows without
 touching upstream `tests/` or `benchmarks/` content.

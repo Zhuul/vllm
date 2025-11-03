@@ -15,7 +15,8 @@ profiles:
         - --dtype bfloat16
         - --generation-config vllm
         - --kv-cache-dtype fp8
-        - --quantization-param-path /home/vllmuser/kvdata/deepseek-r1/kv_cache_scales.json
+        - --quantization-param-path
+        - /home/vllmuser/kvdata/deepseek-r1/kv_cache_scales.json
         - --max-num-seqs 1
         - --max-num-batched-tokens 768
         - --reasoning-parser deepseek_r1
@@ -31,7 +32,8 @@ profiles:
       dataset_prompt: Calibration sample {i}. Short text for KV scales.
       cache_dir: /home/vllmuser/.cache/modelscope
       llm_compressor_repo: /opt/llm-compressor
-      quantization_script: examples/quantization_non_uniform/quantization_multiple_modifiers.py
+      quantization_script: >-
+        examples/quantization_non_uniform/quantization_multiple_modifiers.py
       quant_args: []
 
   vl-thinker:
@@ -50,7 +52,8 @@ profiles:
         - --dtype bfloat16
         - --generation-config vllm
         - --kv-cache-dtype fp8
-        - --quantization-param-path /home/vllmuser/kvdata/qwen3-vl/kv_cache_scales.json
+        - --quantization-param-path
+        - /home/vllmuser/kvdata/qwen3-vl/kv_cache_scales.json
         - --max-num-seqs 1
         - --max-num-batched-tokens 768
         - --reasoning-parser qwen3
@@ -68,7 +71,8 @@ profiles:
       dataset_prompt: Calibration sample {i}. Short text for KV scales.
       cache_dir: /home/vllmuser/.cache/modelscope
       llm_compressor_repo: /opt/llm-compressor
-      quantization_script: examples/quantization_non_uniform/quantization_multiple_modifiers.py
+      quantization_script: >-
+        examples/quantization_non_uniform/quantization_multiple_modifiers.py
       quant_args: []
 
   embedding-service:

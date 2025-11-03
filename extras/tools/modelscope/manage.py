@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """ModelScope helper CLI for vLLM development workflows."""
 
 from __future__ import annotations
@@ -9,8 +11,8 @@ import os
 import shlex
 import subprocess
 import sys
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Sequence
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "model_profiles.yaml"
@@ -38,7 +40,7 @@ def load_profiles() -> Mapping[str, Mapping[str, object]]:
     profiles = raw.get("profiles")
     if not isinstance(profiles, Mapping):
         raise SystemExit(f"'profiles' section missing in {CONFIG_PATH}")
-    output: Dict[str, Mapping[str, object]] = {}
+    output: dict[str, Mapping[str, object]] = {}
     for name, payload in profiles.items():
         if not isinstance(payload, Mapping):
             raise SystemExit(f"Profile '{name}' payload must be a mapping")
@@ -94,7 +96,7 @@ def handle_serve(args: argparse.Namespace) -> int:
         raise SystemExit("serve.entrypoint must be a string")
 
     try:
-        cmd: List[str] = shlex.split(entrypoint)
+        cmd: list[str] = shlex.split(entrypoint)
     except ValueError as exc:
         raise SystemExit(f"Failed to parse entrypoint: {exc}") from exc
 
@@ -110,7 +112,7 @@ def handle_serve(args: argparse.Namespace) -> int:
     for extra in args.extra_arg:
         cmd.extend(shlex.split(extra))
 
-    env_data: Dict[str, str] = {}
+    env_data: dict[str, str] = {}
     for block in (profile.get("env"), serve_section.get("env")):
         if not block:
             continue
@@ -143,7 +145,8 @@ def _write_default_calib(calib_path: Path, samples: int, template: str) -> None:
     with calib_path.open("w", encoding="utf-8") as handle:
         for idx in range(samples):
             payload = {"text": template.format(i=idx)}
-            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            handle.write(json.dumps(payload, ensure_ascii=False))
+            handle.write("\n")
     print(f"[kv-calibrate] wrote calibration set -> {calib_path}")
 
 
@@ -173,7 +176,7 @@ def _synthesize_transformer_files(model_dir: Path) -> None:
         picked = None
         for candidate in sorted(glob.glob(str(model_dir / "*.json"))):
             try:
-                with open(candidate, "r", encoding="utf-8") as handle:
+                with open(candidate, encoding="utf-8") as handle:
                     payload = json.load(handle)
             except Exception:
                 continue
@@ -195,14 +198,25 @@ def _synthesize_transformer_files(model_dir: Path) -> None:
             payload["tokenizer_file"] = "tokenizer.json"
         elif (model_dir / "tokenizer.model").exists():
             payload["model_max_length"] = 32768
-        tokenizer_cfg.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tokenizer_cfg.write_text(
+            json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
-    for name in ("special_tokens_map.json", "generation_config.json", "preprocessor_config.json", "added_tokens.json"):
+    for name in (
+        "special_tokens_map.json",
+        "generation_config.json",
+        "preprocessor_config.json",
+        "added_tokens.json",
+    ):
         target = model_dir / name
         if target.exists():
             continue
         default_obj = [] if "added_tokens" in name else {}
-        target.write_text(json.dumps(default_obj, ensure_ascii=False), encoding="utf-8")
+        target.write_text(
+            json.dumps(default_obj, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
 
 def _ensure_llm_compressor(repo_path: Path) -> None:
@@ -253,13 +267,15 @@ def _install_llm_compressor_deps(repo_path: Path) -> None:
     ]
     run_subprocess(editable_cmd)
 
-    check_cmd = [
-        "python3",
-        "-c",
-        "import compressed_tensors, datasets; "
-        "print('[deps] compressed_tensors =', compressed_tensors.__version__); "
-        "print('[deps] datasets           =', datasets.__version__)",
-    ]
+    check_code = "\n".join(
+        [
+            "import compressed_tensors",
+            "import datasets",
+            "print('[deps] compressed_tensors =', compressed_tensors.__version__)",
+            "print('[deps] datasets           =', datasets.__version__)",
+        ]
+    )
+    check_cmd = ["python3", "-c", check_code]
     run_subprocess(check_cmd)
 
 
@@ -267,19 +283,22 @@ def handle_kv_calibrate(args: argparse.Namespace) -> int:
     profile = ensure_profile(args.profile)
     section = profile.get("kv_calibration")
     if not isinstance(section, Mapping):
-        raise SystemExit(f"Profile '{args.profile}' missing 'kv_calibration' mapping")
+        message = f"Profile '{args.profile}' missing 'kv_calibration' mapping"
+        raise SystemExit(message)
 
     model_id = section.get("model_id")
     if not isinstance(model_id, str):
         raise SystemExit("kv_calibration.model_id must be provided")
 
-    output = Path(section.get("output", "/kvdata/kv_cache_scales.json")).resolve()
+    default_output = Path.home() / "kvdata" / "kv_cache_scales.json"
+    output = Path(section.get("output", str(default_output))).resolve()
     _ensure_dir(output.parent)
     if output.exists() and not args.force:
         print(f"[kv-calibrate] reuse existing scales -> {output}")
         return 0
 
-    calib_path = Path(section.get("calib_data", "/kvdata/calib/snippets.jsonl")).resolve()
+    default_calib = Path.home() / "kvdata" / "calib" / "snippets.jsonl"
+    calib_path = Path(section.get("calib_data", str(default_calib))).resolve()
     if not calib_path.exists():
         samples = int(section.get("samples", 128))
         template = str(
@@ -289,13 +308,16 @@ def handle_kv_calibrate(args: argparse.Namespace) -> int:
         )
         _write_default_calib(calib_path, samples, template)
 
+    cache_default = Path.home() / ".cache" / "modelscope"
     cache_dir = Path(
-        section.get("cache_dir", os.environ.get("MODELSCOPE_CACHE", "/root/.cache/modelscope"))
+        section.get("cache_dir", os.environ.get("MODELSCOPE_CACHE", str(cache_default)))
     )
     model_dir = _download_model(model_id, cache_dir)
     _synthesize_transformer_files(model_dir)
 
-    repo_path = Path(section.get("llm_compressor_repo", "/opt/llm-compressor")).resolve()
+    repo_path = Path(
+        section.get("llm_compressor_repo", "/opt/llm-compressor")
+    ).resolve()
     _ensure_llm_compressor(repo_path)
 
     if not args.skip_deps:
@@ -353,9 +375,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     serve = sub.add_parser("serve", help="Launch vLLM API for a profile")
-    serve.add_argument("--profile", required=True, help="Profile name from model_profiles.yaml")
-    serve.add_argument("--print-command", action="store_true", help="Print command before execution")
-    serve.add_argument("--dry-run", action="store_true", help="Only print command and exit")
+    serve.add_argument(
+        "--profile",
+        required=True,
+        help="Profile name from model_profiles.yaml",
+    )
+    serve.add_argument(
+        "--print-command",
+        action="store_true",
+        help="Print command before execution",
+    )
+    serve.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Only print command and exit",
+    )
     serve.add_argument(
         "--extra-arg",
         action="append",
@@ -371,8 +405,16 @@ def build_parser() -> argparse.ArgumentParser:
     serve.set_defaults(func=handle_serve)
 
     kv = sub.add_parser("kv-calibrate", help="Generate KV cache scales for a profile")
-    kv.add_argument("--profile", required=True, help="Profile name from model_profiles.yaml")
-    kv.add_argument("--force", action="store_true", help="Overwrite existing output file")
+    kv.add_argument(
+        "--profile",
+        required=True,
+        help="Profile name from model_profiles.yaml",
+    )
+    kv.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing output file",
+    )
     kv.add_argument(
         "--skip-deps",
         action="store_true",
@@ -380,7 +422,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     kv.set_defaults(func=handle_kv_calibrate)
 
-    sub.add_parser("list", help="List available profiles").set_defaults(func=handle_list)
+    sub.add_parser(
+        "list",
+        help="List available profiles",
+    ).set_defaults(func=handle_list)
 
     return parser
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Curated test runner for vLLM extras workflows."""
 
 from __future__ import annotations
@@ -10,8 +12,9 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Sequence
+from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_MATRIX = BASE_DIR / "test_matrix.yaml"
@@ -34,7 +37,11 @@ def load_matrix(path: Path) -> Mapping[str, Any]:
     return data
 
 
-def collect_suites(matrix: Mapping[str, Any], profile: str, suites: Sequence[str] | None) -> List[str]:
+def collect_suites(
+    matrix: Mapping[str, Any],
+    profile: str,
+    suites: Sequence[str] | None,
+) -> list[str]:
     declared = matrix.get("profiles", {})
     default_order: Iterable[str]
     if isinstance(declared, Mapping) and profile in declared:
@@ -53,7 +60,12 @@ def collect_suites(matrix: Mapping[str, Any], profile: str, suites: Sequence[str
     return selected
 
 
-def run_command(command: str, env: Mapping[str, str], workdir: Path | None, timeout: int | None) -> Dict[str, Any]:
+def run_command(
+    command: str,
+    env: Mapping[str, str],
+    workdir: Path | None,
+    timeout: int | None,
+) -> dict[str, Any]:
     merged_env = dict(os.environ)
     merged_env.update({k: str(v) for k, v in env.items()})
 
@@ -83,12 +95,16 @@ def run_command(command: str, env: Mapping[str, str], workdir: Path | None, time
     }
 
 
-def run_suite(suite_name: str, suite_cfg: Mapping[str, Any], profile: str) -> List[Dict[str, Any]]:
+def run_suite(
+    suite_name: str,
+    suite_cfg: Mapping[str, Any],
+    profile: str,
+) -> list[dict[str, Any]]:
     commands = suite_cfg.get("commands")
     if not isinstance(commands, Sequence):
         raise SystemExit(f"Suite '{suite_name}' must contain a sequence of commands")
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     for index, item in enumerate(commands):
         if not isinstance(item, Mapping):
             raise SystemExit(f"Suite '{suite_name}' command #{index} must be a mapping")
@@ -100,12 +116,16 @@ def run_suite(suite_name: str, suite_cfg: Mapping[str, Any], profile: str) -> Li
 
         workdir = item.get("workdir")
         if workdir is not None and not isinstance(workdir, str):
-            raise SystemExit(f"Suite '{suite_name}' command '{name}' has invalid workdir")
+            raise SystemExit(
+                f"Suite '{suite_name}' command '{name}' has invalid workdir"
+            )
         workdir_path = Path(workdir).resolve() if workdir else None
 
         env = item.get("env") or {}
         if not isinstance(env, Mapping):
-            raise SystemExit(f"Suite '{suite_name}' command '{name}' env must be a mapping")
+            raise SystemExit(
+                f"Suite '{suite_name}' command '{name}' env must be a mapping"
+            )
 
         timeout = item.get("timeout")
         if timeout is not None:
@@ -173,10 +193,25 @@ def summarise(results: Sequence[Mapping[str, Any]]) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", required=True, help="profile name from test_matrix.yaml")
-    parser.add_argument("--suite", action="append", help="suite to run (repeatable)")
-    parser.add_argument("--matrix", default=str(DEFAULT_MATRIX), help="path to test matrix YAML")
-    parser.add_argument("--output", help="path to write JSON results (file or directory)")
+    parser.add_argument(
+        "--profile",
+        required=True,
+        help="profile name from test_matrix.yaml",
+    )
+    parser.add_argument(
+        "--suite",
+        action="append",
+        help="suite to run (repeatable)",
+    )
+    parser.add_argument(
+        "--matrix",
+        default=str(DEFAULT_MATRIX),
+        help="path to test matrix YAML",
+    )
+    parser.add_argument(
+        "--output",
+        help="path to write JSON results (file or directory)",
+    )
     return parser
 
 
@@ -191,7 +226,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     suites = collect_suites(matrix, args.profile, args.suite)
 
-    results: List[Mapping[str, Any]] = []
+    results: list[Mapping[str, Any]] = []
     for suite in suites:
         cfg = suites_cfg.get(suite)
         if not isinstance(cfg, Mapping):
