@@ -171,7 +171,7 @@ load_modelscope_config() {
 		set -u
 	fi
 
-	if [[ ${#MODELSCOPE_MOUNTS[@]:-0} -eq 0 && -n "${MODELSCOPE_CACHE_VOLUME:-}" ]]; then
+	if [[ ${#MODELSCOPE_MOUNTS[@]} -eq 0 && -n "${MODELSCOPE_CACHE_VOLUME:-}" ]]; then
 		MODELSCOPE_MOUNTS=("$MODELSCOPE_CACHE_VOLUME")
 	fi
 }
@@ -388,7 +388,10 @@ collect_secret_env_files() {
 
 apply_modelscope_mounts() {
 	load_modelscope_config
-	local mounts=("${MODELSCOPE_MOUNTS[@]:-}")
+	local mounts=()
+	if [[ ${#MODELSCOPE_MOUNTS[@]} -gt 0 ]]; then
+		mounts=("${MODELSCOPE_MOUNTS[@]}")
+	fi
 	[[ ${#mounts[@]} -gt 0 ]] || return
 	for entry in "${mounts[@]}"; do
 		[[ -n "$entry" ]] || continue
@@ -502,9 +505,11 @@ prepare_run_args() {
 	collect_fa3_envs
 	collect_secret_env_files
 	load_modelscope_config
-	for kv in "${MODELSCOPE_ENV_VARS[@]:-}"; do
-		add_env_var "$kv"
-	done
+	if [[ ${#MODELSCOPE_ENV_VARS[@]} -gt 0 ]]; then
+		for kv in "${MODELSCOPE_ENV_VARS[@]}"; do
+			add_env_var "$kv"
+		done
+	fi
 	apply_modelscope_mounts
 }
 
