@@ -8,7 +8,7 @@ touching upstream `tests/` or `benchmarks/` content.
   writes structured JSON results under `extras/testing/results/`.
 - `compare_results.py` diff-checks two result files to highlight regressions.
 
-### Example
+## Example
 
 ```bash
 # Baseline run
