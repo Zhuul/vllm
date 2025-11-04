@@ -3,7 +3,6 @@ profiles:
     description: DeepSeek-R1 reasoning model served from ModelScope assets.
     env:
       MODELSCOPE_CACHE: /home/vllmuser/.cache/modelscope/reasoning
-      VLLM_USE_MODELSCOPE: "1"
       PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     serve:
       entrypoint: python -m vllm.entrypoints.openai.api_server
@@ -27,11 +26,11 @@ profiles:
       model_id: deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
       output: /home/vllmuser/kvdata/deepseek-r1/kv_cache_scales.json
       calib_data: /home/vllmuser/kvdata/calib/snippets.jsonl
-      samples: 128
+      samples: 512
       seq_len: 4096
       dataset_prompt: Calibration sample {i}. Short text for KV scales.
-      cache_dir: /home/vllmuser/.cache/modelscope
-      llm_compressor_repo: /opt/llm-compressor
+      cache_dir: /home/vllmuser/.cache/modelscope/reasoning
+      llm_compressor_repo: /home/vllmuser/.local/share/llm-compressor
       quantization_script: >-
         examples/quantization_non_uniform/quantization_multiple_modifiers.py
       quant_args: []
@@ -40,7 +39,6 @@ profiles:
     description: Qwen3 VL thinking model with precomputed KV scales.
     env:
       MODELSCOPE_CACHE: /home/vllmuser/.cache/modelscope/vl
-      VLLM_USE_MODELSCOPE: "1"
       PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     serve:
       entrypoint: python -m vllm.entrypoints.openai.api_server
@@ -66,11 +64,11 @@ profiles:
       model_id: Qwen/Qwen3-VL-8B-Thinking-FP8
       output: /home/vllmuser/kvdata/qwen3-vl/kv_cache_scales.json
       calib_data: /home/vllmuser/kvdata/calib/snippets.jsonl
-      samples: 128
+      samples: 512
       seq_len: 4096
       dataset_prompt: Calibration sample {i}. Short text for KV scales.
-      cache_dir: /home/vllmuser/.cache/modelscope
-      llm_compressor_repo: /opt/llm-compressor
+      cache_dir: /home/vllmuser/.cache/modelscope/vl
+      llm_compressor_repo: /home/vllmuser/.local/share/llm-compressor
       quantization_script: >-
         examples/quantization_non_uniform/quantization_multiple_modifiers.py
       quant_args: []
@@ -79,7 +77,6 @@ profiles:
     description: Qwen3 embedding endpoint served via OpenAI-compatible API.
     env:
       MODELSCOPE_CACHE: /home/vllmuser/.cache/modelscope
-      VLLM_USE_MODELSCOPE: "1"
       PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     serve:
       entrypoint: python -m vllm.entrypoints.openai.api_server
