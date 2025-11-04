@@ -9,8 +9,10 @@ import argparse
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
+from datetime import datetime
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
@@ -19,6 +21,10 @@ CONFIG_PATH = BASE_DIR / "model_profiles.yaml"
 DEFAULT_MODELSCOPE_CACHE = Path.home() / ".cache" / "modelscope"
 DEFAULT_HF_HOME = Path.home() / ".cache" / "hf"
 RUNNER_FILENAME = "_modelscope_runner.py"
+DEFAULT_KV_ROOT = Path.home() / "kvdata"
+KV_CACHE_FILENAME = "kv_cache_scales.json"
+MODEL_VOLUME_PREFIX = "model-"
+KV_VOLUME_PREFIX = "kv-"
 
 OFFLINE_ENV_DEFAULTS: dict[str, str] = {
     "VLLM_USE_MODELSCOPE": "True",
@@ -85,6 +91,99 @@ def _resolve_model_root(base_dir: Path) -> Path:
         print(f"[kv-calibrate] warning: failed to resolve nested model dir ({exc})")
 
     return base_dir
+
+
+def _normalize_model_id(model_id: str) -> str:
+    return model_id.strip()
+
+
+def _safe_model_key(model_id: str) -> str:
+    normalized = _normalize_model_id(model_id)
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in normalized)
+    return safe
+
+
+def _model_cache_root(model_id: str, base: Path | None = None) -> Path:
+    base_dir = Path(base or DEFAULT_MODELSCOPE_CACHE)
+    return base_dir / _safe_model_key(model_id)
+
+
+def _kv_model_root(model_id: str, base: Path | None = None) -> Path:
+    base_dir = Path(base or DEFAULT_KV_ROOT)
+    return base_dir / _safe_model_key(model_id)
+
+
+def _metadata_path(cache_root: Path) -> Path:
+    return cache_root / ".modelscope-manage.json"
+
+
+def _write_snapshot_metadata(cache_root: Path, model_id: str, snapshot_path: Path) -> None:
+    payload = {
+        "model_id": _normalize_model_id(model_id),
+        "cache_root": str(cache_root),
+        "snapshot_path": str(snapshot_path),
+        "updated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    }
+    cache_root.mkdir(parents=True, exist_ok=True)
+    _metadata_path(cache_root).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _read_snapshot_metadata(cache_root: Path) -> Mapping[str, object] | None:
+    meta_file = _metadata_path(cache_root)
+    if not meta_file.exists():
+        return None
+    try:
+        return json.loads(meta_file.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _clean_cache_root(cache_root: Path) -> None:
+    if not cache_root.exists():
+        return
+    if cache_root == cache_root.anchor:
+        raise SystemExit(f"Refusing to remove root directory: {cache_root}")
+    shutil.rmtree(cache_root, ignore_errors=True)
+
+
+def _volume_name(prefix: str, model_id: str) -> str:
+    safe = _safe_model_key(model_id)
+    return f"{prefix}{safe}"
+
+
+def _run_podman(args: Sequence[str]) -> tuple[bool, str]:
+    podman = shutil.which("podman")
+    if podman is None:
+        return False, "podman CLI not found"
+    proc = subprocess.run([podman, *args], capture_output=True, text=True)
+    if proc.returncode != 0:
+        message = proc.stderr.strip() or proc.stdout.strip()
+        return False, message
+    return True, proc.stdout.strip()
+
+
+def _ensure_podman_volume(name: str) -> None:
+    ok, _ = _run_podman(["volume", "inspect", name])
+    if ok:
+        print(f"[volume] reuse existing Podman volume '{name}'")
+        return
+    ok, message = _run_podman(["volume", "create", name])
+    if ok:
+        print(f"[volume] created Podman volume '{name}'")
+    else:
+        print(f"[volume] warning: unable to ensure volume '{name}': {message}")
+
+
+def _remove_podman_volume(name: str) -> None:
+    ok, message = _run_podman(["volume", "inspect", name])
+    if not ok:
+        print(f"[volume] volume '{name}' not found (skip removal)")
+        return
+    ok, message = _run_podman(["volume", "rm", name])
+    if ok:
+        print(f"[volume] removed Podman volume '{name}'")
+    else:
+        print(f"[volume] warning: unable to remove volume '{name}': {message}")
 
 
 def _load_yaml() -> Mapping[str, object]:
@@ -666,28 +765,210 @@ def _install_llm_compressor_deps(repo_path: Path) -> None:
     run_subprocess(check_cmd)
 
 
+def _locate_snapshot(cache_root: Path) -> Path | None:
+    metadata = _read_snapshot_metadata(cache_root)
+    if metadata:
+        snap = metadata.get("snapshot_path")
+        if isinstance(snap, str):
+            candidate = Path(snap).expanduser().resolve()
+            if candidate.exists():
+                return candidate
+
+    if not cache_root.exists():
+        return None
+
+    candidates = sorted(
+        (path.parent for path in cache_root.rglob("config.json")),
+        key=lambda p: (len(p.parts), str(p)),
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _print_snapshot_info(model_id: str, cache_root: Path, snapshot_dir: Path | None) -> None:
+    print(f"Model ID    : {model_id}")
+    print(f"Cache root  : {cache_root}")
+    if snapshot_dir is None:
+        print("Snapshot    : <missing>")
+        return
+    print(f"Snapshot    : {snapshot_dir}")
+    meta = _read_snapshot_metadata(cache_root)
+    if meta and meta.get("updated_at"):
+        print(f"Updated at  : {meta['updated_at']}")
+    try:
+        size_bytes = sum(p.stat().st_size for p in snapshot_dir.rglob("*") if p.is_file())
+        size_mb = size_bytes / (1024 * 1024)
+        print(f"Disk usage  : {size_mb:.2f} MB")
+    except Exception:
+        pass
+    cfg = snapshot_dir / "config.json"
+    if cfg.exists():
+        try:
+            payload = json.loads(cfg.read_text(encoding="utf-8"))
+            model_type = payload.get("model_type", "<unknown>")
+            arch = payload.get("architectures")
+            if isinstance(arch, list):
+                arch = ", ".join(str(item) for item in arch)
+        except Exception:
+            model_type = "<unknown>"
+            arch = None
+        print(f"Model type  : {model_type}")
+        if arch:
+            print(f"Architectures: {arch}")
+
+
+def handle_install_model(args: argparse.Namespace) -> int:
+    model_id = _normalize_model_id(args.model_id)
+    cache_root = Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+    with_volume = not getattr(args, "no_volume", False)
+    with_kv_volume = not getattr(args, "no_kv_volume", False)
+    if with_volume:
+        _ensure_podman_volume(_volume_name(MODEL_VOLUME_PREFIX, model_id))
+    if with_kv_volume:
+        _ensure_podman_volume(_volume_name(KV_VOLUME_PREFIX, model_id))
+    model_dir = _download_model(model_id, cache_root)
+    _synthesize_transformer_files(model_dir)
+    _write_snapshot_metadata(cache_root, model_id, model_dir)
+    if with_kv_volume:
+        kv_root = _kv_model_root(model_id)
+        kv_root.mkdir(parents=True, exist_ok=True)
+    print(f"[install] snapshot ready -> {model_dir}")
+    if with_volume:
+        print(
+            f"[install] podman mount suggestion: -v {_volume_name(MODEL_VOLUME_PREFIX, model_id)}:{cache_root}:U"
+        )
+    if with_kv_volume:
+        kv_root = _kv_model_root(model_id)
+        print(
+            f"[install] podman mount suggestion: -v {_volume_name(KV_VOLUME_PREFIX, model_id)}:{kv_root}:U"
+        )
+    return 0
+
+
+def handle_model_info(args: argparse.Namespace) -> int:
+    model_id = _normalize_model_id(args.model_id)
+    cache_root = Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+    snapshot_dir = _locate_snapshot(cache_root)
+    if snapshot_dir is None:
+        print(f"[info] snapshot missing for {model_id} in {cache_root}")
+        return 1
+    _print_snapshot_info(model_id, cache_root, snapshot_dir)
+    return 0
+
+
+def handle_model_check(args: argparse.Namespace) -> int:
+    model_id = _normalize_model_id(args.model_id)
+    cache_root = Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+    snapshot_dir = _locate_snapshot(cache_root)
+    if snapshot_dir is None:
+        print(f"[check] snapshot missing for {model_id}")
+        return 1
+
+    _print_snapshot_info(model_id, cache_root, snapshot_dir)
+
+    try:
+        from transformers import AutoConfig, AutoTokenizer  # type: ignore
+    except ImportError as exc:
+        raise SystemExit("Transformers is required for 'check'. Install it inside the container.") from exc
+
+    try:
+        cfg = AutoConfig.from_pretrained(snapshot_dir, trust_remote_code=True, local_files_only=True)
+        print(f"[check] AutoConfig OK -> {cfg.__class__.__name__}")
+        tok = AutoTokenizer.from_pretrained(snapshot_dir, trust_remote_code=True, local_files_only=True)
+        added = len(getattr(tok, "added_tokens_encoder", {}) or {})
+        print(f"[check] AutoTokenizer OK -> {tok.__class__.__name__} (added tokens: {added})")
+    except Exception as exc:  # pylint: disable=broad-except
+        raise SystemExit(f"[check] failed to load snapshot: {exc}") from exc
+    return 0
+
+
+def handle_model_delete(args: argparse.Namespace) -> int:
+    model_id = _normalize_model_id(args.model_id)
+    cache_root = Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+    snapshot_dir = _locate_snapshot(cache_root)
+    if not cache_root.exists():
+        print(f"[delete] cache root missing -> {cache_root}")
+    else:
+        if not args.force:
+            confirm = input(f"Remove snapshot at {cache_root}? [y/N]: ").strip().lower()
+            if confirm not in ("y", "yes"):
+                print("[delete] cancelled")
+                return 1
+        _clean_cache_root(cache_root)
+        print(f"[delete] removed cache root -> {cache_root}")
+
+    meta = _metadata_path(cache_root)
+    if meta.exists():
+        meta.unlink()
+
+    if args.remove_volume:
+        _remove_podman_volume(_volume_name(MODEL_VOLUME_PREFIX, model_id))
+    if args.remove_kv:
+        kv_root = _kv_model_root(model_id)
+        if kv_root.exists():
+            _clean_cache_root(kv_root)
+            print(f"[delete] removed kv data -> {kv_root}")
+        _remove_podman_volume(_volume_name(KV_VOLUME_PREFIX, model_id))
+    return 0
 def handle_kv_calibrate(args: argparse.Namespace) -> int:
-    profile = ensure_profile(args.profile)
-    section = profile.get("kv_calibration")
-    if not isinstance(section, Mapping):
-        message = f"Profile '{args.profile}' missing 'kv_calibration' mapping"
-        raise SystemExit(message)
+    if not getattr(args, "profile", None) and not getattr(args, "model", None):
+        raise SystemExit("kv-calibrate requires --profile or --model")
 
-    model_id = section.get("model_id")
-    if not isinstance(model_id, str):
-        raise SystemExit("kv_calibration.model_id must be provided")
+    volumes_enabled = not getattr(args, "no_volumes", False)
 
-    default_output = Path.home() / "kvdata" / "kv_cache_scales.json"
-    output = Path(section.get("output", str(default_output))).resolve()
+    if getattr(args, "profile", None):
+        profile = ensure_profile(args.profile)
+        section = profile.get("kv_calibration")
+        if not isinstance(section, Mapping):
+            raise SystemExit(f"Profile '{args.profile}' missing 'kv_calibration' mapping")
+        model_id = _normalize_model_id(str(section.get("model_id", "")))
+        if not model_id:
+            raise SystemExit("kv_calibration.model_id must be provided")
+        cache_default = Path.home() / ".cache" / "modelscope"
+        cache_dir = Path(
+            section.get("cache_dir", os.environ.get("MODELSCOPE_CACHE", str(cache_default)))
+        ).expanduser().resolve()
+        quant_args = section.get("quant_args", [])
+    else:
+        model_id = _normalize_model_id(args.model)
+        cache_dir = Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+        output_default = _kv_model_root(model_id) / KV_CACHE_FILENAME
+        calib_default = _kv_model_root(model_id) / "calib" / "snippets.jsonl"
+        section = {
+            "model_id": model_id,
+            "output": str(Path(args.output or output_default).expanduser().resolve()),
+            "calib_data": str(Path(args.calib_data or calib_default).expanduser().resolve()),
+            "samples": args.samples or 512,
+            "seq_len": args.seq_len or 4096,
+            "dataset_prompt": args.dataset_prompt
+            or "Calibration sample {i}. Short text for KV scales.",
+            "cache_dir": str(cache_dir),
+            "llm_compressor_repo": str(
+                Path(args.llm_compressor_repo or (Path.home() / ".local" / "share" / "llm-compressor"))
+                .expanduser()
+                .resolve()
+            ),
+            "quantization_script": args.quant_script
+            or "examples/quantization_non_uniform/quantization_multiple_modifiers.py",
+            "quant_args": list(args.quant_arg or []),
+        }
+        quant_args = section["quant_args"]
+
+    if volumes_enabled:
+        _ensure_podman_volume(_volume_name(MODEL_VOLUME_PREFIX, model_id))
+        _ensure_podman_volume(_volume_name(KV_VOLUME_PREFIX, model_id))
+
+    output = Path(section.get("output", str(DEFAULT_KV_ROOT / KV_CACHE_FILENAME))).expanduser().resolve()
     _ensure_dir(output.parent)
     if output.exists() and not args.force:
         print(f"[kv-calibrate] reuse existing scales -> {output}")
         return 0
 
-    default_calib = Path.home() / "kvdata" / "calib" / "snippets.jsonl"
-    calib_path = Path(section.get("calib_data", str(default_calib))).resolve()
+    calib_path = Path(section.get("calib_data", str(DEFAULT_KV_ROOT / "calib" / "snippets.jsonl"))).expanduser().resolve()
     if not calib_path.exists():
-        samples = int(section.get("samples", 128))
+        samples = int(section.get("samples", 512))
         template = str(
             section.get(
                 "dataset_prompt", "Calibration sample {i}. Short text for KV scales."
@@ -695,17 +976,12 @@ def handle_kv_calibrate(args: argparse.Namespace) -> int:
         )
         _write_default_calib(calib_path, samples, template)
 
-    cache_default = Path.home() / ".cache" / "modelscope"
-    cache_dir = Path(
-        section.get("cache_dir", os.environ.get("MODELSCOPE_CACHE", str(cache_default)))
-    ).expanduser().resolve()
+    cache_dir = Path(section.get("cache_dir", str(DEFAULT_MODELSCOPE_CACHE))).expanduser().resolve()
     model_dir = _download_model(model_id, cache_dir)
     _synthesize_transformer_files(model_dir)
+    _write_snapshot_metadata(cache_dir, model_id, model_dir)
 
-    default_repo = Path.home() / ".local" / "share" / "llm-compressor"
-    repo_path = Path(
-        section.get("llm_compressor_repo", str(default_repo))
-    ).resolve()
+    repo_path = Path(section.get("llm_compressor_repo", str(Path.home() / ".local" / "share" / "llm-compressor"))).resolve()
     _ensure_llm_compressor(repo_path)
     runner_path = _ensure_llm_compressor_runner(repo_path)
 
@@ -721,15 +997,14 @@ def handle_kv_calibrate(args: argparse.Namespace) -> int:
     if not quant_script.exists():
         raise SystemExit(f"Quantization script not found: {quant_script}")
 
-    quant_args = section.get("quant_args", [])
+    quant_args_list: list[str] = []
     if quant_args:
         if not isinstance(quant_args, Sequence):
             raise SystemExit("kv_calibration.quant_args must be a sequence")
         for item in quant_args:
             if not isinstance(item, str):
                 raise SystemExit("kv_calibration.quant_args entries must be strings")
-    else:
-        quant_args = []
+            quant_args_list.append(item)
 
     env = dict(os.environ)
     cache_str = str(cache_dir)
@@ -746,7 +1021,7 @@ def handle_kv_calibrate(args: argparse.Namespace) -> int:
     env["MODEL_DIR"] = str(model_dir)
     env["CALIB_DATA_PATH"] = str(calib_path)
     env["KV_CALIB_SEQ_LEN"] = str(seq_len)
-    env["KV_CALIB_SAMPLES"] = str(section.get("samples", 128))
+    env["KV_CALIB_SAMPLES"] = str(section.get("samples", 512))
 
     cmd = [
         "python3",
@@ -762,7 +1037,7 @@ def handle_kv_calibrate(args: argparse.Namespace) -> int:
         str(seq_len),
         "--calib-data",
         str(calib_path),
-    ] + list(quant_args)
+    ] + quant_args_list
 
     run_subprocess(cmd, env=env)
     print(f"[kv-calibrate] completed -> {output}")
@@ -808,11 +1083,111 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve.set_defaults(func=handle_serve)
 
+    install = sub.add_parser("install", help="Download a ModelScope snapshot")
+    install.add_argument("model_id", help="ModelScope model identifier (e.g. org/name)")
+    install.add_argument(
+        "--cache-dir",
+        help="Custom cache root (defaults to ~/.cache/modelscope/<model>)",
+    )
+    install.add_argument(
+        "--no-volume",
+        action="store_true",
+        help="Do not create a Podman volume for this model",
+    )
+    install.add_argument(
+        "--no-kv-volume",
+        action="store_true",
+        help="Do not create a Podman volume for calibrated KV data",
+    )
+    install.set_defaults(func=handle_install_model)
+
+    info = sub.add_parser("info", help="Show snapshot details for a model")
+    info.add_argument("model_id", help="ModelScope model identifier")
+    info.add_argument(
+        "--cache-dir",
+        help="Custom cache root (defaults to ~/.cache/modelscope/<model>)",
+    )
+    info.set_defaults(func=handle_model_info)
+
+    check = sub.add_parser("check", help="Validate local snapshot files")
+    check.add_argument("model_id", help="ModelScope model identifier")
+    check.add_argument(
+        "--cache-dir",
+        help="Custom cache root (defaults to ~/.cache/modelscope/<model>)",
+    )
+    check.set_defaults(func=handle_model_check)
+
+    delete = sub.add_parser("delete", help="Remove a local snapshot and volumes")
+    delete.add_argument("model_id", help="ModelScope model identifier")
+    delete.add_argument(
+        "--cache-dir",
+        help="Custom cache root (defaults to ~/.cache/modelscope/<model>)",
+    )
+    delete.add_argument(
+        "--force",
+        action="store_true",
+        help="Remove without interactive confirmation",
+    )
+    delete.add_argument(
+        "--remove-volume",
+        action="store_true",
+        help="Remove associated Podman cache volume",
+    )
+    delete.add_argument(
+        "--remove-kv",
+        action="store_true",
+        help="Remove KV data and associated volume",
+    )
+    delete.set_defaults(func=handle_model_delete)
+
     kv = sub.add_parser("kv-calibrate", help="Generate KV cache scales for a profile")
     kv.add_argument(
         "--profile",
-        required=True,
-        help="Profile name from model_profiles.yaml",
+        help="Profile name from model_profiles.yaml (optional when --model is used)",
+    )
+    kv.add_argument(
+        "--model",
+        help="ModelScope identifier used for ad-hoc calibration",
+    )
+    kv.add_argument(
+        "--cache-dir",
+        help="Override cache directory for the snapshot",
+    )
+    kv.add_argument(
+        "--output",
+        help="Path to write KV scales (defaults to ~/kvdata/<model>/kv_cache_scales.json)",
+    )
+    kv.add_argument(
+        "--calib-data",
+        help="Path to calibration JSONL (defaults to ~/kvdata/<model>/calib/snippets.jsonl)",
+    )
+    kv.add_argument(
+        "--samples",
+        type=int,
+        help="Number of calibration samples (defaults to profile or 512)",
+    )
+    kv.add_argument(
+        "--seq-len",
+        type=int,
+        help="Sequence length for calibration (defaults to profile or 4096)",
+    )
+    kv.add_argument(
+        "--dataset-prompt",
+        help="Template for synthesized calibration data",
+    )
+    kv.add_argument(
+        "--quant-script",
+        help="Relative path to the llm-compressor quantization script",
+    )
+    kv.add_argument(
+        "--quant-arg",
+        action="append",
+        default=[],
+        help="Additional argument passed to the quantization script (repeatable)",
+    )
+    kv.add_argument(
+        "--llm-compressor-repo",
+        help="Path to the llm-compressor repository checkout",
     )
     kv.add_argument(
         "--force",
@@ -823,6 +1198,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-deps",
         action="store_true",
         help="Skip pip dependency installation for llm-compressor",
+    )
+    kv.add_argument(
+        "--no-volumes",
+        action="store_true",
+        help="Do not create Podman volumes automatically",
     )
     kv.set_defaults(func=handle_kv_calibrate)
 

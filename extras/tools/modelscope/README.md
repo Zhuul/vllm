@@ -10,7 +10,12 @@ developing inside the vLLM dev container.
 - `manage.py` provides a CLI with the following subcommands:
     - `list` — show available profiles.
     - `serve --profile NAME` — launch the OpenAI-compatible server for a profile.
-    - `kv-calibrate --profile NAME` — generate KV cache scales with llm-compressor.
+    - `install MODEL_ID` — download/prepare a ModelScope snapshot (creates matching Podman volumes).
+    - `info MODEL_ID` — display metadata for a cached snapshot.
+    - `check MODEL_ID` — validate that a snapshot can be loaded fully offline.
+    - `delete MODEL_ID` — remove the snapshot (optional volume cleanup).
+    - `kv-calibrate --profile NAME` — generate KV cache scales using profile settings.
+    - `kv-calibrate --model MODEL_ID` — ad-hoc KV calibration with sensible defaults.
 
 All commands respect the ModelScope cache path configured via
 `MODELSCOPE_CACHE` (default `/home/vllmuser/.cache/modelscope` inside the dev
