@@ -216,9 +216,11 @@ benchmarks/**/*.json
 actionlint
 shellcheck*/
 
-# Ignore moe/marlin_moe gen code
-csrc/moe/marlin_moe_wna16/kernel_*
-
 # Ignore ep_kernels_workspace folder
 ep_kernels_workspace/
+
+# Allow tracked library source folders under submodules (e.g., benchmarks/lib)
+!vllm/benchmarks/lib/
+
 extras/secrets/*.env
+
