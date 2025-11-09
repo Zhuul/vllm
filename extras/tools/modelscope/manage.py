@@ -12,8 +12,8 @@ import shlex
 import shutil
 import subprocess
 import sys
-from datetime import datetime
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -99,7 +99,9 @@ def _normalize_model_id(model_id: str) -> str:
 
 def _safe_model_key(model_id: str) -> str:
     normalized = _normalize_model_id(model_id)
-    safe = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in normalized)
+    safe = "".join(
+        ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in normalized
+    )
     return safe
 
 
@@ -117,7 +119,9 @@ def _metadata_path(cache_root: Path) -> Path:
     return cache_root / ".modelscope-manage.json"
 
 
-def _write_snapshot_metadata(cache_root: Path, model_id: str, snapshot_path: Path) -> None:
+def _write_snapshot_metadata(
+    cache_root: Path, model_id: str, snapshot_path: Path
+) -> None:
     payload = {
         "model_id": _normalize_model_id(model_id),
         "cache_root": str(cache_root),
@@ -125,7 +129,9 @@ def _write_snapshot_metadata(cache_root: Path, model_id: str, snapshot_path: Pat
         "updated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
     cache_root.mkdir(parents=True, exist_ok=True)
-    _metadata_path(cache_root).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _metadata_path(cache_root).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def _read_snapshot_metadata(cache_root: Path) -> Mapping[str, object] | None:
@@ -450,16 +456,25 @@ def _sanitize_config_for_offline(model_dir: Path) -> None:
     sentinel_keys = ("base_model_name_or_path", "_name_or_path")
     for key in sentinel_keys:
         val = data.get(key)
-        if isinstance(val, str) and val.strip():
-            if "meta-llama" in val or val.startswith("hf://") or "/" in val:
-                data[key] = "."
-                changed = True
+        if (
+            isinstance(val, str)
+            and val.strip()
+            and (
+                "meta-llama" in val
+                or val.startswith("hf://")
+                or "/" in val
+            )
+        ):
+            data[key] = "."
+            changed = True
 
     auto_map = data.get("auto_map")
     if isinstance(auto_map, dict):
         for map_key, map_val in list(auto_map.items()):
             if isinstance(map_val, str) and "meta-llama" in map_val:
-                auto_map[map_key] = map_val.replace("meta-llama/Meta-Llama-3-8B-Instruct", ".")
+                auto_map[map_key] = map_val.replace(
+                    "meta-llama/Meta-Llama-3-8B-Instruct", "."
+                )
                 changed = True
 
     if changed:
@@ -543,7 +558,11 @@ def _patch_huggingface_hub() -> None:
     if cached_files is not None:
         original_cached_files = cached_files
 
-        def _cached_files(path_or_repo_id, filenames=None, **kwargs):  # type: ignore[override]
+        def _cached_files(
+            path_or_repo_id,
+            filenames=None,
+            **kwargs,
+        ):  # type: ignore[override]
             resolved = _resolve_identifier(path_or_repo_id)
             if isinstance(resolved, str) and os.path.isdir(resolved) and filenames:
                 resolved_files = []
@@ -553,7 +572,11 @@ def _patch_huggingface_hub() -> None:
                         resolved_files.append(candidate)
                 if resolved_files:
                     return resolved_files
-            return original_cached_files(path_or_repo_id, filenames=filenames, **kwargs)  # type: ignore[misc]
+            return original_cached_files(
+                path_or_repo_id,
+                filenames=filenames,
+                **kwargs,
+            )  # type: ignore[misc]
 
         file_download.cached_files = _cached_files  # type: ignore[attr-defined]
 
@@ -561,7 +584,11 @@ def _patch_huggingface_hub() -> None:
     if hf_download is not None:
         original_hf_download = hf_download
 
-        def _hf_hub_download(path_or_repo_id, filename=None, **kwargs):  # type: ignore[override]
+        def _hf_hub_download(
+            path_or_repo_id,
+            filename=None,
+            **kwargs,
+        ):  # type: ignore[override]
             resolved = _resolve_identifier(path_or_repo_id)
             if isinstance(resolved, str) and os.path.isdir(resolved) and filename:
                 candidate = os.path.join(resolved, filename)
@@ -569,14 +596,22 @@ def _patch_huggingface_hub() -> None:
                     return candidate
             if MODEL_DIR and os.path.isdir(MODEL_DIR):
                 kwargs.setdefault("local_files_only", True)
-            return original_hf_download(path_or_repo_id, filename=filename, **kwargs)  # type: ignore[misc]
+            return original_hf_download(
+                path_or_repo_id,
+                filename=filename,
+                **kwargs,
+            )  # type: ignore[misc]
 
         file_download.hf_hub_download = _hf_hub_download  # type: ignore[attr-defined]
 
 
 def _patch_transformers() -> None:
     try:
-        from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer  # type: ignore
+        from transformers import (  # type: ignore
+            AutoConfig,
+            AutoModelForCausalLM,
+            AutoTokenizer,
+        )
     except Exception:
         return
 
@@ -587,8 +622,15 @@ def _patch_transformers() -> None:
         func = cm.__func__  # type: ignore[attr-defined]
 
         @functools.wraps(func)  # type: ignore[misc]
-        def wrapper(cls, pretrained_model_name_or_path=None, *args, **kwargs):  # type: ignore[override]
-            resolved = _resolve_identifier(pretrained_model_name_or_path)  # type: ignore[arg-type]
+        def wrapper(
+            cls,
+            pretrained_model_name_or_path=None,
+            *args,
+            **kwargs,
+        ):  # type: ignore[override]
+            resolved = _resolve_identifier(
+                pretrained_model_name_or_path
+            )  # type: ignore[arg-type]
             if not (isinstance(resolved, str) and os.path.isdir(resolved)):
                 resolved = MODEL_DIR
             resolved_path = Path(resolved)
@@ -787,7 +829,9 @@ def _locate_snapshot(cache_root: Path) -> Path | None:
     return None
 
 
-def _print_snapshot_info(model_id: str, cache_root: Path, snapshot_dir: Path | None) -> None:
+def _print_snapshot_info(
+    model_id: str, cache_root: Path, snapshot_dir: Path | None
+) -> None:
     print(f"Model ID    : {model_id}")
     print(f"Cache root  : {cache_root}")
     if snapshot_dir is None:
@@ -798,7 +842,9 @@ def _print_snapshot_info(model_id: str, cache_root: Path, snapshot_dir: Path | N
     if meta and meta.get("updated_at"):
         print(f"Updated at  : {meta['updated_at']}")
     try:
-        size_bytes = sum(p.stat().st_size for p in snapshot_dir.rglob("*") if p.is_file())
+        size_bytes = sum(
+            p.stat().st_size for p in snapshot_dir.rglob("*") if p.is_file()
+        )
         size_mb = size_bytes / (1024 * 1024)
         print(f"Disk usage  : {size_mb:.2f} MB")
     except Exception:
@@ -821,7 +867,9 @@ def _print_snapshot_info(model_id: str, cache_root: Path, snapshot_dir: Path | N
 
 def handle_install_model(args: argparse.Namespace) -> int:
     model_id = _normalize_model_id(args.model_id)
-    cache_root = Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+    cache_root = (
+        Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+    )
     with_volume = not getattr(args, "no_volume", False)
     with_kv_volume = not getattr(args, "no_kv_volume", False)
     if with_volume:
@@ -837,19 +885,23 @@ def handle_install_model(args: argparse.Namespace) -> int:
     print(f"[install] snapshot ready -> {model_dir}")
     if with_volume:
         print(
-            f"[install] podman mount suggestion: -v {_volume_name(MODEL_VOLUME_PREFIX, model_id)}:{cache_root}:U"
+            "[install] podman mount suggestion: "
+            f"-v {_volume_name(MODEL_VOLUME_PREFIX, model_id)}:{cache_root}:U"
         )
     if with_kv_volume:
         kv_root = _kv_model_root(model_id)
         print(
-            f"[install] podman mount suggestion: -v {_volume_name(KV_VOLUME_PREFIX, model_id)}:{kv_root}:U"
+            "[install] podman mount suggestion: "
+            f"-v {_volume_name(KV_VOLUME_PREFIX, model_id)}:{kv_root}:U"
         )
     return 0
 
 
 def handle_model_info(args: argparse.Namespace) -> int:
     model_id = _normalize_model_id(args.model_id)
-    cache_root = Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+    cache_root = (
+        Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+    )
     snapshot_dir = _locate_snapshot(cache_root)
     if snapshot_dir is None:
         print(f"[info] snapshot missing for {model_id} in {cache_root}")
@@ -860,7 +912,9 @@ def handle_model_info(args: argparse.Namespace) -> int:
 
 def handle_model_check(args: argparse.Namespace) -> int:
     model_id = _normalize_model_id(args.model_id)
-    cache_root = Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+    cache_root = (
+        Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+    )
     snapshot_dir = _locate_snapshot(cache_root)
     if snapshot_dir is None:
         print(f"[check] snapshot missing for {model_id}")
@@ -871,14 +925,23 @@ def handle_model_check(args: argparse.Namespace) -> int:
     try:
         from transformers import AutoConfig, AutoTokenizer  # type: ignore
     except ImportError as exc:
-        raise SystemExit("Transformers is required for 'check'. Install it inside the container.") from exc
+        raise SystemExit(
+            "Transformers is required for 'check'. Install it inside the container."
+        ) from exc
 
     try:
-        cfg = AutoConfig.from_pretrained(snapshot_dir, trust_remote_code=True, local_files_only=True)
+        cfg = AutoConfig.from_pretrained(
+            snapshot_dir, trust_remote_code=True, local_files_only=True
+        )
         print(f"[check] AutoConfig OK -> {cfg.__class__.__name__}")
-        tok = AutoTokenizer.from_pretrained(snapshot_dir, trust_remote_code=True, local_files_only=True)
+        tok = AutoTokenizer.from_pretrained(
+            snapshot_dir, trust_remote_code=True, local_files_only=True
+        )
         added = len(getattr(tok, "added_tokens_encoder", {}) or {})
-        print(f"[check] AutoTokenizer OK -> {tok.__class__.__name__} (added tokens: {added})")
+        print(
+            "[check] AutoTokenizer OK -> "
+            f"{tok.__class__.__name__} (added tokens: {added})"
+        )
     except Exception as exc:  # pylint: disable=broad-except
         raise SystemExit(f"[check] failed to load snapshot: {exc}") from exc
     return 0
@@ -886,13 +949,18 @@ def handle_model_check(args: argparse.Namespace) -> int:
 
 def handle_model_delete(args: argparse.Namespace) -> int:
     model_id = _normalize_model_id(args.model_id)
-    cache_root = Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+    cache_root = (
+        Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+    )
     snapshot_dir = _locate_snapshot(cache_root)
+    target_display = snapshot_dir or cache_root
     if not cache_root.exists():
         print(f"[delete] cache root missing -> {cache_root}")
     else:
         if not args.force:
-            confirm = input(f"Remove snapshot at {cache_root}? [y/N]: ").strip().lower()
+            confirm = input(
+                f"Remove snapshot at {target_display}? [y/N]: "
+            ).strip().lower()
             if confirm not in ("y", "yes"):
                 print("[delete] cancelled")
                 return 1
@@ -912,6 +980,8 @@ def handle_model_delete(args: argparse.Namespace) -> int:
             print(f"[delete] removed kv data -> {kv_root}")
         _remove_podman_volume(_volume_name(KV_VOLUME_PREFIX, model_id))
     return 0
+
+
 def handle_kv_calibrate(args: argparse.Namespace) -> int:
     if not getattr(args, "profile", None) and not getattr(args, "model", None):
         raise SystemExit("kv-calibrate requires --profile or --model")
@@ -922,31 +992,46 @@ def handle_kv_calibrate(args: argparse.Namespace) -> int:
         profile = ensure_profile(args.profile)
         section = profile.get("kv_calibration")
         if not isinstance(section, Mapping):
-            raise SystemExit(f"Profile '{args.profile}' missing 'kv_calibration' mapping")
+            raise SystemExit(
+                f"Profile '{args.profile}' missing 'kv_calibration' mapping"
+            )
         model_id = _normalize_model_id(str(section.get("model_id", "")))
         if not model_id:
             raise SystemExit("kv_calibration.model_id must be provided")
         cache_default = Path.home() / ".cache" / "modelscope"
-        cache_dir = Path(
-            section.get("cache_dir", os.environ.get("MODELSCOPE_CACHE", str(cache_default)))
-        ).expanduser().resolve()
+        cache_dir = (
+            Path(
+                section.get(
+                    "cache_dir", os.environ.get("MODELSCOPE_CACHE", str(cache_default))
+                )
+            )
+            .expanduser()
+            .resolve()
+        )
         quant_args = section.get("quant_args", [])
     else:
         model_id = _normalize_model_id(args.model)
-        cache_dir = Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+        cache_dir = (
+            Path(args.cache_dir or _model_cache_root(model_id)).expanduser().resolve()
+        )
         output_default = _kv_model_root(model_id) / KV_CACHE_FILENAME
         calib_default = _kv_model_root(model_id) / "calib" / "snippets.jsonl"
         section = {
             "model_id": model_id,
             "output": str(Path(args.output or output_default).expanduser().resolve()),
-            "calib_data": str(Path(args.calib_data or calib_default).expanduser().resolve()),
+            "calib_data": str(
+                Path(args.calib_data or calib_default).expanduser().resolve()
+            ),
             "samples": args.samples or 512,
             "seq_len": args.seq_len or 4096,
             "dataset_prompt": args.dataset_prompt
             or "Calibration sample {i}. Short text for KV scales.",
             "cache_dir": str(cache_dir),
             "llm_compressor_repo": str(
-                Path(args.llm_compressor_repo or (Path.home() / ".local" / "share" / "llm-compressor"))
+                Path(
+                    args.llm_compressor_repo
+                    or (Path.home() / ".local" / "share" / "llm-compressor")
+                )
                 .expanduser()
                 .resolve()
             ),
@@ -960,13 +1045,23 @@ def handle_kv_calibrate(args: argparse.Namespace) -> int:
         _ensure_podman_volume(_volume_name(MODEL_VOLUME_PREFIX, model_id))
         _ensure_podman_volume(_volume_name(KV_VOLUME_PREFIX, model_id))
 
-    output = Path(section.get("output", str(DEFAULT_KV_ROOT / KV_CACHE_FILENAME))).expanduser().resolve()
+    output = (
+        Path(section.get("output", str(DEFAULT_KV_ROOT / KV_CACHE_FILENAME)))
+        .expanduser()
+        .resolve()
+    )
     _ensure_dir(output.parent)
     if output.exists() and not args.force:
         print(f"[kv-calibrate] reuse existing scales -> {output}")
         return 0
 
-    calib_path = Path(section.get("calib_data", str(DEFAULT_KV_ROOT / "calib" / "snippets.jsonl"))).expanduser().resolve()
+    calib_path = (
+        Path(
+            section.get("calib_data", str(DEFAULT_KV_ROOT / "calib" / "snippets.jsonl"))
+        )
+        .expanduser()
+        .resolve()
+    )
     if not calib_path.exists():
         samples = int(section.get("samples", 512))
         template = str(
@@ -976,12 +1071,21 @@ def handle_kv_calibrate(args: argparse.Namespace) -> int:
         )
         _write_default_calib(calib_path, samples, template)
 
-    cache_dir = Path(section.get("cache_dir", str(DEFAULT_MODELSCOPE_CACHE))).expanduser().resolve()
+    cache_dir = (
+        Path(section.get("cache_dir", str(DEFAULT_MODELSCOPE_CACHE)))
+        .expanduser()
+        .resolve()
+    )
     model_dir = _download_model(model_id, cache_dir)
     _synthesize_transformer_files(model_dir)
     _write_snapshot_metadata(cache_dir, model_id, model_dir)
 
-    repo_path = Path(section.get("llm_compressor_repo", str(Path.home() / ".local" / "share" / "llm-compressor"))).resolve()
+    repo_path = Path(
+        section.get(
+            "llm_compressor_repo",
+            str(Path.home() / ".local" / "share" / "llm-compressor"),
+        )
+    ).resolve()
     _ensure_llm_compressor(repo_path)
     runner_path = _ensure_llm_compressor_runner(repo_path)
 
@@ -1155,11 +1259,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     kv.add_argument(
         "--output",
-        help="Path to write KV scales (defaults to ~/kvdata/<model>/kv_cache_scales.json)",
+        help=(
+            "Path to write KV scales (defaults to "
+            "~/kvdata/<model>/kv_cache_scales.json)"
+        ),
     )
     kv.add_argument(
         "--calib-data",
-        help="Path to calibration JSONL (defaults to ~/kvdata/<model>/calib/snippets.jsonl)",
+        help=(
+            "Path to calibration JSONL (defaults to "
+            "~/kvdata/<model>/calib/snippets.jsonl)"
+        ),
     )
     kv.add_argument(
         "--samples",
