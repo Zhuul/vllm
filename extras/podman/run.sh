@@ -392,7 +392,8 @@ apply_modelscope_mounts() {
 	if [[ ${#MODELSCOPE_MOUNTS[@]} -gt 0 ]]; then
 		mounts=("${MODELSCOPE_MOUNTS[@]}")
 	fi
-	[[ ${#mounts[@]} -gt 0 ]] || return
+	# No mounts configured, nothing to do.
+	[[ ${#mounts[@]} -gt 0 ]] || return 0
 	for entry in "${mounts[@]}"; do
 		[[ -n "$entry" ]] || continue
 		local src target opts extra
