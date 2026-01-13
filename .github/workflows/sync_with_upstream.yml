@@ -1,0 +1,80 @@
+name: Sync with Upstream
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs daily at midnight
+  push:
+    branches:
+      - main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Git
+        run: |
+          git config --global user.name 'Zhuul'
+          git config --global user.email '40538530+Zhuul@users.noreply.github.com'
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/vllm-project/vllm.git
+
+      - name: Fetch upstream changes
+        run: git fetch upstream
+
+      - name: Merge upstream changes
+        id: merge
+        run: |
+          git checkout main
+          git merge upstream/main || {
+            echo "Merge conflict detected. Creating a new branch for manual resolution."
+            git checkout -b merge-conflict-$(date +%Y%m%d%H%M%S)
+            git push origin HEAD
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          }
+          echo "conflict=false" >> "$GITHUB_OUTPUT"
+
+      - name: Check for workflow file changes
+        id: workflow_change
+        run: |
+          if git diff --name-only upstream/main | grep '^.github/workflows/'; then
+            echo "workflow_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "workflow_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up PAT authentication
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          git remote set-url origin https://Zhuul:${GH_PAT}@github.com/Zhuul/vllm.git
+
+      - name: Push changes if no workflow files changed
+        if: steps.workflow_change.outputs.workflow_changed == 'false' && steps.merge.outputs.conflict == 'false'
+        run: git push origin main
+
+      - name: Create Pull Request for workflow file changes
+        if: steps.workflow_change.outputs.workflow_changed == 'true' && steps.merge.outputs.conflict == 'false'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GH_PAT }}
+          commit-message: "Sync with upstream: update workflow files"
+          title: "Sync with upstream: update workflow files"
+          body: |
+            This PR was automatically created because workflow files were updated while syncing with upstream.
+            Please review and merge.
+          branch: workflow-sync-${{ github.run_id }}
+          base: main
+
+      - name: Send notification if merge conflict
+        if: steps.merge.outputs.conflict == 'true'
+        run: |
+          echo "Merge conflict detected. Manual intervention required."
+          # Add your notification logic here (e.g., send an email, create an issue, etc.)
