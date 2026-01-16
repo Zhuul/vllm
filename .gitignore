@@ -4,6 +4,9 @@
 # vllm-flash-attn built from source
 vllm/vllm_flash_attn/*
 
+# OpenAI triton kernels copied from source
+vllm/third_party/triton_kernels/*
+
 # triton jit
 .triton
 
@@ -216,11 +219,19 @@ benchmarks/**/*.json
 actionlint
 shellcheck*/
 
+# Ignore moe/marlin_moe gen code
+csrc/moe/marlin_moe_wna16/kernel_*
+
 # Ignore ep_kernels_workspace folder
 ep_kernels_workspace/
 
 # Allow tracked library source folders under submodules (e.g., benchmarks/lib)
 !vllm/benchmarks/lib/
 
-extras/secrets/*.env
+# Generated gRPC protobuf files (compiled at build time from vllm_engine.proto)
+vllm/grpc/vllm_engine_pb2.py
+vllm/grpc/vllm_engine_pb2_grpc.py
+vllm/grpc/vllm_engine_pb2.pyi
 
+# Local secrets (keep untracked)
+extras/secrets/*.env
