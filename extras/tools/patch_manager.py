@@ -3,10 +3,11 @@
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
+
+import regex as re
 
 
 def apply_git_patch(
@@ -100,8 +101,7 @@ def patch_fallback(name: str):
 
         if "_qutlass_fetch_base" in content:
             print(
-                "[patches] qutlass-fetchcontent-base is already "
-                "applied via fallback."
+                "[patches] qutlass-fetchcontent-base is already applied via fallback."
             )
             return True
 
@@ -112,25 +112,25 @@ def patch_fallback(name: str):
             'set(CUTLASS_INCLUDE_DIR "${CUTLASS_INCLUDE_DIR}" '
             'CACHE PATH "Path to CUTLASS include/ directory")\n\n'
             'set(_qutlass_fetch_base "")\n'
-            'if(DEFINED FETCHCONTENT_BASE_DIR AND NOT '
+            "if(DEFINED FETCHCONTENT_BASE_DIR AND NOT "
             '"${FETCHCONTENT_BASE_DIR}" STREQUAL "")\n'
             '  set(_qutlass_fetch_base "${FETCHCONTENT_BASE_DIR}")\n'
-            'elseif(DEFINED CMAKE_FETCHCONTENT_BASE_DIR AND NOT '
+            "elseif(DEFINED CMAKE_FETCHCONTENT_BASE_DIR AND NOT "
             '"${CMAKE_FETCHCONTENT_BASE_DIR}" STREQUAL "")\n'
             '  set(_qutlass_fetch_base "${CMAKE_FETCHCONTENT_BASE_DIR}")\n'
             "endif()\n\n"
             "if(NOT _qutlass_fetch_base)\n"
             '  set(_qutlass_fetch_base "${CMAKE_BINARY_DIR}/_deps")\n'
             "endif()\n\n"
-            'set(_qutlass_default_source_dir '
+            "set(_qutlass_default_source_dir "
             '"${_qutlass_fetch_base}/qutlass-src")\n'
-            'set(_qutlass_default_binary_dir '
+            "set(_qutlass_default_binary_dir "
             '"${_qutlass_fetch_base}/qutlass-build")\n'
-            'set(_qutlass_default_download_dir '
+            "set(_qutlass_default_download_dir "
             '"${_qutlass_fetch_base}/qutlass-download")\n'
-            'set(_qutlass_default_stamp_dir '
+            "set(_qutlass_default_stamp_dir "
             '"${_qutlass_fetch_base}/qutlass-stamp")\n'
-            'set(_qutlass_default_tmp_dir '
+            "set(_qutlass_default_tmp_dir "
             '"${_qutlass_fetch_base}/qutlass-tmp")\n',
         )
 
@@ -218,8 +218,7 @@ def patch_fallback(name: str):
                 s_content = f.read()
             if "cuda_optional_envs" not in s_content:
                 s_new = s_content.replace(
-                    'cmake_args += [f"-DCMAKE_CUDA_COMPILER='
-                    '{CUDA_HOME}/bin/nvcc"]',
+                    'cmake_args += [f"-DCMAKE_CUDA_COMPILER={CUDA_HOME}/bin/nvcc"]',
                     'cmake_args += [f"-DCMAKE_CUDA_COMPILER='
                     '{CUDA_HOME}/bin/nvcc"]\n\n'
                     "        cuda_optional_envs = {\n"

@@ -459,11 +459,7 @@ def _sanitize_config_for_offline(model_dir: Path) -> None:
         if (
             isinstance(val, str)
             and val.strip()
-            and (
-                "meta-llama" in val
-                or val.startswith("hf://")
-                or "/" in val
-            )
+            and ("meta-llama" in val or val.startswith("hf://") or "/" in val)
         ):
             data[key] = "."
             changed = True
@@ -958,9 +954,9 @@ def handle_model_delete(args: argparse.Namespace) -> int:
         print(f"[delete] cache root missing -> {cache_root}")
     else:
         if not args.force:
-            confirm = input(
-                f"Remove snapshot at {target_display}? [y/N]: "
-            ).strip().lower()
+            confirm = (
+                input(f"Remove snapshot at {target_display}? [y/N]: ").strip().lower()
+            )
             if confirm not in ("y", "yes"):
                 print("[delete] cancelled")
                 return 1
