@@ -167,7 +167,8 @@ def patch_fallback(name: str):
     elif name == "cuda-optional-flags":
         cmakelists_file = Path("CMakeLists.txt")
         setup_file = Path("setup.py")
-        applied = False
+        cmake_applied = False
+        setup_applied = False
 
         if cmakelists_file.exists():
             with open(cmakelists_file, encoding="utf-8") as f:
@@ -205,13 +206,13 @@ def patch_fallback(name: str):
                 if c_new != c_content:
                     with open(cmakelists_file, "w", encoding="utf-8") as f:
                         f.write(c_new)
-                    applied = True
+                    cmake_applied = True
             else:
                 print(
                     "[patches] fallback for cuda-optional-flags "
                     "(CMakeLists.txt) already applied."
                 )
-                applied = True
+                cmake_applied = True
 
         if setup_file.exists():
             with open(setup_file, encoding="utf-8") as f:
@@ -246,17 +247,22 @@ def patch_fallback(name: str):
                 if s_new != s_content:
                     with open(setup_file, "w", encoding="utf-8") as f:
                         f.write(s_new)
-                    applied = True
+                    setup_applied = True
             else:
                 print(
                     "[patches] fallback for cuda-optional-flags "
                     "(setup.py) already applied."
                 )
-                applied = True
+                setup_applied = True
 
-        if applied:
+        if cmake_applied and setup_applied:
             print("[patches] Applied fallback for cuda-optional-flags.")
             return True
+        elif cmake_applied or setup_applied:
+            print(
+                "[patches] WARNING: Fallback for cuda-optional-flags partially applied."
+            )
+            return False
 
     return False
 
