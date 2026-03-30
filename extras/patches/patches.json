@@ -1,0 +1,27 @@
+{
+  "patches": [
+    {
+      "name": "cumem-alloc-env-fallback",
+      "diff": "0001-cumem-alloc-env-fallback.diff",
+      "skip_in_overlay": true,
+      "fallback": {
+        "type": "regex_replace",
+        "file": "vllm/device_allocator/cumem.py",
+        "pattern": "conf = os.environ.get\\(\"PYTORCH_CUDA_ALLOC_CONF\", \"\"\\)",
+        "replacement": "conf = os.environ.get(\"PYTORCH_ALLOC_CONF\",\\n       os.environ.get(\"PYTORCH_CUDA_ALLOC_CONF\", \"\"))"
+      }
+    },
+    {
+      "name": "flashmla-cudatoolkit-include",
+      "diff": "0002-flashmla-cudatoolkit-include.diff"
+    },
+    {
+      "name": "qutlass-fetchcontent-base",
+      "diff": "0003-qutlass-fetchcontent-base.diff"
+    },
+    {
+      "name": "cuda-optional-flags",
+      "diff": "0004-cuda-optional-flags.diff"
+    }
+  ]
+}
