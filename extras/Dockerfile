@@ -266,7 +266,7 @@ RUN printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -euo pipefail' \
     'cd /workspace 2>/dev/null || exit 0' \
-    'SCRIPT=python ./extras/tools/patch_manager.py' \
+    'SCRIPT=./extras/patches/apply_patches.sh' \
     'if [ -f "$SCRIPT" ]; then' \
     '  echo "[apply-patches] Running $SCRIPT"' \
     '  # Copy to temp and normalize EOL to avoid permission errors on mounted FS' \

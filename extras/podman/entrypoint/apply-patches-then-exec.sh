@@ -23,8 +23,8 @@ fi
 
 export PYTHON_PATCH_OVERLAY=${PYTHON_PATCH_OVERLAY:-1}
 
-OVERLAY_HELPER="python /workspace/extras/tools/patch_manager.py --overlay-mode"
-LEGACY_HELPER="python /workspace/extras/tools/patch_manager.py"
+OVERLAY_HELPER=/workspace/extras/patches/apply_patches_overlay.sh
+LEGACY_HELPER=/workspace/extras/patches/apply_patches.sh
 
 # Only apply patches at container start when explicitly requested.
 # This avoids mutating the bind-mounted workspace during interactive shells

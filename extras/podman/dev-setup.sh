@@ -65,13 +65,13 @@ prepare_src_overlay() {
             cd "$overlay_root"
             # Avoid noisy filemode warnings when applying patches on copied trees
             git config core.filemode false >/dev/null 2>&1 || true
-            PYTHON_PATCH_OVERLAY=0 VLLM_PATCH_ENV=container bash python ./extras/tools/patch_manager.py --overlay-mode >&2 || true
+            PYTHON_PATCH_OVERLAY=0 VLLM_PATCH_ENV=container bash ./extras/patches/apply_patches_overlay.sh >&2 || true
         )
     elif [[ -f "$overlay_root/extras/patches/apply_patches.sh" ]]; then
         (
             cd "$overlay_root"
             git config core.filemode false >/dev/null 2>&1 || true
-            PYTHON_PATCH_OVERLAY=0 VLLM_PATCH_ENV=container bash python ./extras/tools/patch_manager.py >&2 || true
+            PYTHON_PATCH_OVERLAY=0 VLLM_PATCH_ENV=container bash ./extras/patches/apply_patches.sh >&2 || true
         )
     fi
 
