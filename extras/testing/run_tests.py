@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import textwrap
 import time
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
@@ -21,6 +22,14 @@ DEFAULT_MATRIX = BASE_DIR / "test_matrix.yaml"
 RESULTS_DIR = BASE_DIR / "results"
 
 MAX_OUTPUT_CHARS = 4000
+
+
+def utc_now() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
+def utc_timestamp() -> str:
+    return utc_now().isoformat().replace("+00:00", "Z")
 
 
 def load_matrix(path: Path) -> Mapping[str, Any]:
@@ -99,6 +108,7 @@ def run_suite(
     suite_name: str,
     suite_cfg: Mapping[str, Any],
     profile: str,
+    artifact_dir: Path,
 ) -> list[dict[str, Any]]:
     commands = suite_cfg.get("commands")
     if not isinstance(commands, Sequence):
@@ -126,15 +136,24 @@ def run_suite(
             raise SystemExit(
                 f"Suite '{suite_name}' command '{name}' env must be a mapping"
             )
+        command_env = dict(env)
+        command_env.update(
+            {
+                "VLLM_TEST_OUTPUT_DIR": str(artifact_dir),
+                "VLLM_TEST_PROFILE": profile,
+                "VLLM_TEST_SUITE": suite_name,
+                "VLLM_TEST_NAME": str(name),
+            }
+        )
 
         timeout = item.get("timeout")
         if timeout is not None:
             timeout = int(timeout)
 
         print(f"[suite:{suite_name}] running '{name}' -> {command}")
-        start_ts = dt.datetime.utcnow().isoformat() + "Z"
+        start_ts = utc_timestamp()
         try:
-            outcome = run_command(command, env, workdir_path, timeout)
+            outcome = run_command(command, command_env, workdir_path, timeout)
             status = "passed" if outcome["returncode"] == 0 else "failed"
         except subprocess.TimeoutExpired:
             outcome = {
@@ -164,17 +183,66 @@ def resolve_output_path(output: str | None, profile: str) -> Path:
     if output:
         path = Path(output)
         if path.is_dir():
-            timestamp = dt.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+            timestamp = utc_now().strftime("%Y%m%d-%H%M%S")
             return path / f"{timestamp}-{profile}.json"
         return path
-    timestamp = dt.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    timestamp = utc_now().strftime("%Y%m%d-%H%M%S")
     return RESULTS_DIR / f"{timestamp}-{profile}.json"
+
+
+def resolve_artifact_dir(output_path: Path) -> Path:
+    return output_path.parent / f"{output_path.stem}-artifacts"
 
 
 def write_results(path: Path, payload: Sequence[Mapping[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(f"[results] wrote {path}")
+
+
+def write_text_report(
+    path: Path,
+    payload: Sequence[Mapping[str, Any]],
+    artifact_dir: Path,
+) -> None:
+    total = len(payload)
+    failures = sum(1 for item in payload if item["status"] != "passed")
+    lines = [
+        f"Profile report: {path.stem}",
+        f"Generated: {utc_timestamp()}",
+        f"Total commands: {total}",
+        f"Failures: {failures}",
+        f"Artifacts dir: {artifact_dir}",
+        "",
+    ]
+    for item in payload:
+        lines.extend(
+            [
+                f"[{item['status'].upper()}] {item['suite']}::{item['name']}",
+                f"Command: {item['command']}",
+                f"Timestamp: {item['timestamp']}",
+                f"Duration: {item['duration_s']:.2f}s",
+                f"Return code: {item.get('returncode')}",
+            ]
+        )
+        stdout = str(item.get("stdout", "")).strip()
+        stderr = str(item.get("stderr", "")).strip()
+        if stdout:
+            lines.append("Stdout:")
+            lines.append(textwrap.indent(stdout, "  "))
+        if stderr:
+            lines.append("Stderr:")
+            lines.append(textwrap.indent(stderr, "  "))
+        lines.append("")
+
+    if artifact_dir.exists():
+        lines.append("Artifact files:")
+        for artifact in sorted(artifact_dir.rglob("*")):
+            if artifact.is_file():
+                lines.append(f"- {artifact.name}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"[report] wrote {path}")
 
 
 def summarise(results: Sequence[Mapping[str, Any]]) -> None:
@@ -225,16 +293,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit("Matrix missing 'suites' mapping")
 
     suites = collect_suites(matrix, args.profile, args.suite)
+    output_path = resolve_output_path(args.output, args.profile)
+    artifact_dir = resolve_artifact_dir(output_path)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
 
     results: list[Mapping[str, Any]] = []
     for suite in suites:
         cfg = suites_cfg.get(suite)
         if not isinstance(cfg, Mapping):
             raise SystemExit(f"Suite '{suite}' missing configuration")
-        results.extend(run_suite(suite, cfg, args.profile))
+        results.extend(run_suite(suite, cfg, args.profile, artifact_dir))
 
-    output_path = resolve_output_path(args.output, args.profile)
     write_results(output_path, results)
+    write_text_report(output_path.with_suffix(".txt"), results, artifact_dir)
     summarise(results)
     return 0 if all(item["status"] == "passed" for item in results) else 1
 

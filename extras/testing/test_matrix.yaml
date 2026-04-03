@@ -5,8 +5,29 @@ profiles:
   patched:
     suites:
       - smoke
+  image-validation:
+    suites:
+      - env_smoke
+      - deepseek_smoke
+  edit-mode:
+    suites:
+      - smoke
+      - deepseek_smoke
 
 suites:
+  env_smoke:
+    description: Minimal image and runtime validation before deeper model tests.
+    commands:
+      - name: runtime-report
+        cmd: >
+          python extras/testing/env_smoke.py
+          --output "$VLLM_TEST_OUTPUT_DIR/runtime-report.json"
+        workdir: /workspace
+        timeout: 300
+        env:
+          PYTHONUNBUFFERED: "1"
+          CUDA_VISIBLE_DEVICES: "0"
+
   smoke:
     description: Lightweight validation that exercises CUDA bindings and API surface.
     commands:
@@ -14,6 +35,23 @@ suites:
         cmd: pytest tests/test_vllm_port.py -q
         workdir: /workspace
         timeout: 900
+        env:
+          PYTHONUNBUFFERED: "1"
+          CUDA_VISIBLE_DEVICES: "0"
+
+  deepseek_smoke:
+    description: Offline model smoke test using the default cached DeepSeek model.
+    commands:
+      - name: deepseek-offline
+        cmd: >
+          python extras/testing/deepseek_smoke.py
+          --model "${VLLM_SMOKE_MODEL:-${DEEPSEEK_SMOKE_MODEL:-deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B}}"
+          --max-model-len 1024
+          --max-tokens 32
+          --tensor-parallel-size 1
+          --output "$VLLM_TEST_OUTPUT_DIR/deepseek-offline.json"
+        workdir: /workspace
+        timeout: 3600
         env:
           PYTHONUNBUFFERED: "1"
           CUDA_VISIBLE_DEVICES: "0"

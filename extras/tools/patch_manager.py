@@ -193,6 +193,8 @@ def patch_fallback(name: str):
                     "    list(APPEND VLLM_ENABLED_OPTIONAL_CUDA_LIBS ${_lib})\n"
                     "  endif()\n"
                     "endforeach()\n"
+                    "set(CAFFE2_USE_CUDNN ${USE_CUDNN})\n"
+                    "set(CAFFE2_USE_CUSPARSELT ${USE_CUSPARSELT})\n"
                     "if(VLLM_ENABLED_OPTIONAL_CUDA_LIBS)\n"
                     "  list(JOIN VLLM_ENABLED_OPTIONAL_CUDA_LIBS "
                     '", " _vllm_enabled_cuda_libs_joined)\n'
@@ -219,16 +221,13 @@ def patch_fallback(name: str):
                 s_content = f.read()
             if "cuda_optional_envs" not in s_content:
                 s_new = s_content.replace(
-                    'cmake_args += [f"-DCMAKE_CUDA_COMPILER={CUDA_HOME}/bin/nvcc"]',
-                    'cmake_args += [f"-DCMAKE_CUDA_COMPILER='
-                    '{CUDA_HOME}/bin/nvcc"]\n\n'
+                    '        other_cmake_args = os.environ.get("CMAKE_ARGS")',
                     "        cuda_optional_envs = {\n"
                     '            "USE_CUBLAS": os.getenv("USE_CUBLAS"),\n'
                     '            "USE_CUDNN": os.getenv("USE_CUDNN"),\n'
                     '            "USE_CUFILE": os.getenv("USE_CUFILE"),\n'
                     '            "USE_CUSPARSE": os.getenv("USE_CUSPARSE"),\n'
-                    '            "USE_CUSPARSELT": '
-                    'os.getenv("USE_CUSPARSELT"),\n'
+                    '            "USE_CUSPARSELT": os.getenv("USE_CUSPARSELT"),\n'
                     '            "USE_CUDSS": os.getenv("USE_CUDSS"),\n'
                     "        }\n"
                     "        for key, value in cuda_optional_envs.items():\n"
@@ -242,7 +241,8 @@ def patch_fallback(name: str):
                     '            elif normalized in {"0", "off", "false", "no"}:\n'
                     '                cmake_args.append(f"-D{key}=OFF")\n'
                     "            else:\n"
-                    '                cmake_args.append(f"-D{key}={value}")\n',
+                    '                cmake_args.append(f"-D{key}={value}")\n\n'
+                    '        other_cmake_args = os.environ.get("CMAKE_ARGS")',
                 )
                 if s_new != s_content:
                     with open(setup_file, "w", encoding="utf-8") as f:

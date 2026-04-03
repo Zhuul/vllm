@@ -264,7 +264,18 @@ export TMPDIR=/opt/work/tmp
 export TMP=/opt/work/tmp
 export TEMP=/opt/work/tmp
 mkdir -p /opt/work/tmp
-"$TMP_RUN"
+LOG_DIR="${SETUP_LOG_DIR:-/workspace/build/podman-logs}"
+mkdir -p "$LOG_DIR"
+LOG_TS=$(date -u +%Y%m%d-%H%M%S)
+LOG_FILE="$LOG_DIR/setup-${LOG_TS}.log"
+LATEST_LOG="$LOG_DIR/latest-setup.log"
+echo "[podman-run] Writing setup log to $LOG_FILE"
+set -o pipefail
+"$TMP_RUN" 2>&1 | tee "$LOG_FILE"
+status=${PIPESTATUS[0]}
+cp -f "$LOG_FILE" "$LATEST_LOG" 2>/dev/null || true
+echo "[podman-run] Setup log captured at $LOG_FILE"
+exit "$status"
 EOF
 }
 

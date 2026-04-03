@@ -2,7 +2,7 @@ diff --git a/CMakeLists.txt b/CMakeLists.txt
 index 5792dc082..6e8bb71c0 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -20,8 +20,31 @@ message(STATUS "Target device: ${VLLM_TARGET_DEVICE}")
+@@ -20,8 +20,33 @@ message(STATUS "Target device: ${VLLM_TARGET_DEVICE}")
 
  include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
 
@@ -21,6 +21,8 @@ index 5792dc082..6e8bb71c0 100644
 +    list(APPEND VLLM_ENABLED_OPTIONAL_CUDA_LIBS ${_lib})
 +  endif()
 +endforeach()
++set(CAFFE2_USE_CUDNN ${USE_CUDNN})
++set(CAFFE2_USE_CUSPARSELT ${USE_CUSPARSELT})
 +if(VLLM_ENABLED_OPTIONAL_CUDA_LIBS)
 +  list(JOIN VLLM_ENABLED_OPTIONAL_CUDA_LIBS ", " _vllm_enabled_cuda_libs_joined)
 +  message(STATUS "Optional CUDA components enabled: ${_vllm_enabled_cuda_libs_joined}")
@@ -31,18 +33,14 @@ index 5792dc082..6e8bb71c0 100644
  # Suppress potential warnings about unused manually-specified variables
  set(ignoreMe "${VLLM_PYTHON_PATH}")
 
- # Prevent installation of dependencies (cutlass) by default.
- install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY TRUE)" ALL_COMPONENTS)
-
 diff --git a/setup.py b/setup.py
 index 8656d12ad..f3bcd9a9d 100644
 --- a/setup.py
 +++ b/setup.py
-@@ -217,7 +217,28 @@ class cmake_build_ext(build_ext):
-         # Make sure we use the nvcc from CUDA_HOME
-         if _is_cuda():
-             cmake_args += [f"-DCMAKE_CUDA_COMPILER={CUDA_HOME}/bin/nvcc"]
-
+@@ -220,6 +220,26 @@ class cmake_build_ext(build_ext):
+         elif _is_hip() and ROCM_HOME is not None:
+             cmake_args += [f"-DROCM_PATH={ROCM_HOME}"]
+ 
 +        cuda_optional_envs = {
 +            "USE_CUBLAS": os.getenv("USE_CUBLAS"),
 +            "USE_CUDNN": os.getenv("USE_CUDNN"),

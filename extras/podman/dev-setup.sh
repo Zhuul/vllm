@@ -5,6 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}" )" &>/dev/null && pwd)
 EXTRAS_DIR=$(cd -- "${SCRIPT_DIR}/.." &>/dev/null && pwd)
+INITIAL_WORKSPACE_STATUS=""
 
 export VLLM_PATCH_ENV=container
 BUILD_ENV_FILE="${EXTRAS_DIR}/configs/build.env"
@@ -134,38 +135,53 @@ publish_python_overlays() {
 		return
 	fi
 
-		local overlay_root=""
-		local overlay_env="${PYTHON_PATCH_OVERLAY:-}"
-		if [[ -n "$overlay_env" ]]; then
-			case "$overlay_env" in
-				1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn])
+	local overlay_root="${SRC_OVERLAY_DIR:-}"
+	local overlay_env="${PYTHON_PATCH_OVERLAY:-}"
+	if [[ -n "$overlay_env" ]]; then
+		case "$overlay_env" in
+			1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn])
+				if [[ -z "$overlay_root" ]]; then
 					overlay_root=""
-					;;
-				*)
-					overlay_root="$overlay_env"
-					;;
-			esac
+				fi
+				;;
+			*)
+				overlay_root="$overlay_env"
+				;;
+		esac
+	fi
+	if [[ -z "$overlay_root" ]]; then
+		if [[ -d /opt/work ]]; then
+			overlay_root="/opt/work/python-overrides"
+		else
+			overlay_root="/tmp/python-overrides"
 		fi
-		if [[ -z "$overlay_root" ]]; then
-			if [[ -d /opt/work ]]; then
-				overlay_root="/opt/work/python-overrides"
-			else
-				overlay_root="/tmp/python-overrides"
-			fi
-		fi
+	fi
+	local use_source_overlay=0
+	if [[ -n "${SRC_OVERLAY_DIR:-}" && "$overlay_root" == "$SRC_OVERLAY_DIR" ]]; then
+		use_source_overlay=1
+	fi
 
 	mkdir -p "$overlay_root" || true
-		if command -v git >/dev/null 2>&1; then
-			git config --global --add safe.directory /workspace >/dev/null 2>&1 || true
-		fi
+	if command -v git >/dev/null 2>&1; then
+		git config --global --add safe.directory /workspace >/dev/null 2>&1 || true
+	fi
 	local copied=0
 	for raw in "${entries[@]}"; do
-		local parts=()
-		IFS='::' read -r -a parts <<< "$raw"
-		local mapping="${parts[0]}"
+		raw="${raw%$'\r'}"
+		local mapping="$raw"
+		local extras_spec=""
+		if [[ "$raw" == *"::"* ]]; then
+			mapping="${raw%%::*}"
+			extras_spec="${raw#*::}"
+		fi
 		local extras=()
-		if [[ ${#parts[@]} -gt 1 ]]; then
-			extras=(${parts[@]:1})
+		if [[ -n "$extras_spec" ]]; then
+			while IFS= read -r extra; do
+				extra="$(echo "$extra" | xargs)"
+				if [[ -n "$extra" ]]; then
+					extras+=("$extra")
+				fi
+			done < <(printf '%s' "$extras_spec" | tr ':' '\n')
 		fi
 
 		local map_src="$mapping"
@@ -191,13 +207,13 @@ publish_python_overlays() {
 		mkdir -p "$(dirname "$dest")"
 		cp -f "$src" "$dest"
 		echo "[overlay] Copied $map_src -> $dest"
-		((copied++))
-		if git ls-files --error-unmatch "$map_dest" >/dev/null 2>&1; then
-			if ! git checkout -- "$map_dest" >/dev/null 2>&1; then
+		((copied+=1))
+		if git -C /workspace ls-files --error-unmatch "$map_dest" >/dev/null 2>&1; then
+			if ! git -C /workspace checkout -- "$map_dest" >/dev/null 2>&1; then
 				echo "[overlay] Failed to restore $map_dest from Git" >&2
 				exit 1
 			fi
-			if git status --porcelain --untracked-files=no -- "$map_dest" | grep -q '.'; then
+			if git -C /workspace status --porcelain --untracked-files=no -- "$map_dest" | grep -q '.'; then
 				echo "[overlay] $map_dest remains dirty after checkout" >&2
 				exit 1
 			fi
@@ -225,9 +241,11 @@ publish_python_overlays() {
 	fi
 
 	if command -v git >/dev/null 2>&1; then
-		if git status --porcelain --untracked-files=no | grep -q '.'; then
+		local current_status
+		current_status="$(git -C /workspace status --porcelain --untracked-files=no 2>/dev/null || true)"
+		if [[ "$current_status" != "$INITIAL_WORKSPACE_STATUS" ]]; then
 			echo "[overlay] ERROR: Tracked files changed during overlay publish" >&2
-			git status --short --untracked-files=no >&2 || true
+			git -C /workspace status --short --untracked-files=no >&2 || true
 			exit 1
 		fi
 	fi
@@ -239,10 +257,15 @@ print(sysconfig.get_paths().get('purelib', ''), end='')
 PY
 )
 	if [[ -n "$purelib" ]]; then
-		mkdir -p "$purelib"
 		local pth_file="$purelib/vllm_extras_overlay.pth"
-		printf '%s\n' "$overlay_root" > "$pth_file"
-		echo "[overlay] Registered overlay at $pth_file"
+		if [[ $use_source_overlay -eq 1 ]]; then
+			rm -f "$pth_file"
+			echo "[overlay] Applied Python overrides directly into source overlay"
+		else
+			mkdir -p "$purelib"
+			printf '%s\n' "$overlay_root" > "$pth_file"
+			echo "[overlay] Registered overlay at $pth_file"
+		fi
 	else
 		echo "[overlay] Unable to locate site-packages; overlay not registered" >&2
 	fi
@@ -259,6 +282,7 @@ cd /workspace
 
 if command -v git >/dev/null 2>&1; then
 	git config --global --add safe.directory /workspace >/dev/null 2>&1 || true
+	INITIAL_WORKSPACE_STATUS="$(git -C /workspace status --porcelain --untracked-files=no 2>/dev/null || true)"
 fi
 
 export SETUPTOOLS_SCM_ROOT=${SETUPTOOLS_SCM_ROOT:-/workspace}
@@ -284,11 +308,45 @@ export MAX_JOBS=${MAX_JOBS:-4}
 # CUDA 13 toolchain dropped SM70/75; ensure we don't pass them to nvcc
 export TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST:-"8.0 8.6 8.9 9.0 12.0 13.0"}
 export CUDAARCHS=${CUDAARCHS:-"80;86;89;90;120"}
+export USE_CUBLAS=${USE_CUBLAS:-1}
+export USE_CUDNN=${USE_CUDNN:-1}
+export USE_CUFILE=${USE_CUFILE:-0}
+export USE_CUSPARSE=${USE_CUSPARSE:-1}
+export USE_CUSPARSELT=${USE_CUSPARSELT:-1}
+export USE_CUDSS=${USE_CUDSS:-0}
+
+if [[ "${USE_CUSPARSELT}" != "0" ]]; then
+	CUSPARSELT_ROOT_DIR=""
+	for base in "$VIRTUAL_ENV"/lib*/python*/site-packages/nvidia/cusparselt; do
+		if [[ -f "$base/lib/libcusparseLt.so.0" && -f "$base/include/cusparseLt.h" ]]; then
+			if [[ ! -e "$base/lib/libcusparseLt.so" ]]; then
+				ln -sf libcusparseLt.so.0 "$base/lib/libcusparseLt.so"
+			fi
+			CUSPARSELT_ROOT_DIR="$base"
+			break
+		fi
+	done
+	if [[ -n "$CUSPARSELT_ROOT_DIR" ]]; then
+		export CUSPARSELT_ROOT_DIR
+		export CUSPARSELT_INCLUDE_DIR="$CUSPARSELT_ROOT_DIR/include"
+		export CUSPARSELT_LIBRARY="$CUSPARSELT_ROOT_DIR/lib"
+		export CUSPARSELT_INCLUDE_PATH="$CUSPARSELT_INCLUDE_DIR"
+		export CUSPARSELT_LIBRARY_PATH="$CUSPARSELT_LIBRARY/libcusparseLt.so"
+		echo "[dev-setup] cuSPARSELt detected from Python wheel at $CUSPARSELT_ROOT_DIR" >&2
+	elif ! ldconfig -p 2>/dev/null | grep -qi 'cusparselt'; then
+		echo "[dev-setup] cuSPARSELt libraries not found in the container; forcing USE_CUSPARSELT=0" >&2
+		export USE_CUSPARSELT=0
+	fi
+fi
+
+echo "[dev-setup] Optional CUDA flags: CUBLAS=$USE_CUBLAS CUDNN=$USE_CUDNN CUFILE=$USE_CUFILE CUSPARSE=$USE_CUSPARSE CUSPARSELT=$USE_CUSPARSELT CUDSS=$USE_CUDSS" >&2
 
 # Install Python deps from repo (torch stack already in image)
 if [[ -f requirements/common.txt ]]; then
 	pip install -r requirements/common.txt || true
 fi
+# Extras smoke tests import tblib from tests/conftest.py.
+pip install "tblib==3.1.0" || true
 
 # Ensure build backend is available when using --no-build-isolation
 pip install -U "setuptools>=77,<80" setuptools-scm wheel packaging || true
@@ -316,6 +374,30 @@ install_editable_from_overlay() {
       *" -DCUDNN_LIBRARY_PATH="*) : ;;
       *) CMAKE_ARGS_INIT+=" -DCUDNN_LIBRARY_PATH=/usr/lib64" ;;
     esac
+		if [[ -n "${CUSPARSELT_INCLUDE_DIR:-}" ]]; then
+			case " ${CMAKE_ARGS_INIT} " in
+				*" -DCUSPARSELT_INCLUDE_DIR="*) : ;;
+				*) CMAKE_ARGS_INIT+=" -DCUSPARSELT_INCLUDE_DIR=${CUSPARSELT_INCLUDE_DIR}" ;;
+			esac
+		fi
+		if [[ -n "${CUSPARSELT_LIBRARY:-}" ]]; then
+			case " ${CMAKE_ARGS_INIT} " in
+				*" -DCUSPARSELT_LIBRARY="*) : ;;
+				*) CMAKE_ARGS_INIT+=" -DCUSPARSELT_LIBRARY=${CUSPARSELT_LIBRARY}" ;;
+			esac
+		fi
+		if [[ -n "${CUSPARSELT_INCLUDE_PATH:-}" ]]; then
+			case " ${CMAKE_ARGS_INIT} " in
+				*" -DCUSPARSELT_INCLUDE_PATH="*) : ;;
+				*) CMAKE_ARGS_INIT+=" -DCUSPARSELT_INCLUDE_PATH=${CUSPARSELT_INCLUDE_PATH}" ;;
+			esac
+		fi
+		if [[ -n "${CUSPARSELT_LIBRARY_PATH:-}" ]]; then
+			case " ${CMAKE_ARGS_INIT} " in
+				*" -DCUSPARSELT_LIBRARY_PATH="*) : ;;
+				*) CMAKE_ARGS_INIT+=" -DCUSPARSELT_LIBRARY_PATH=${CUSPARSELT_LIBRARY_PATH}" ;;
+			esac
+		fi
     export CMAKE_ARGS="${CMAKE_ARGS_INIT}"
     FETCHCONTENT_BASE_DIR="$TMPDIR/deps" \
         pip install -e . --no-deps --no-build-isolation --verbose \
@@ -340,9 +422,10 @@ publish_python_overlays
 # No reset needed: host workspace remained clean; overlay keeps patches
 
 if command -v git >/dev/null 2>&1; then
-	if git status --porcelain --untracked-files=no | grep -q '.'; then
+	current_status="$(git -C /workspace status --porcelain --untracked-files=no 2>/dev/null || true)"
+	if [[ "$current_status" != "$INITIAL_WORKSPACE_STATUS" ]]; then
 		echo "[dev-setup] ERROR: repository left dirty after setup" >&2
-		git status --short --untracked-files=no >&2 || true
+		git -C /workspace status --short --untracked-files=no >&2 || true
 		exit 1
 	fi
 fi

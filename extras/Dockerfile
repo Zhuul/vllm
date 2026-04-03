@@ -33,6 +33,7 @@ RUN dnf update -y && dnf install --allowerasing -y \
     git gcc gcc-c++ cmake \
     make patch which findutils tar rsync \
     wget curl vim nano pkgconfig \
+    hostname iproute iputils \
     zlib-devel bzip2 bzip2-devel xz xz-devel libffi-devel \
     openssl-devel sqlite-devel \
     && (dnf install -y readline-devel || true) \
@@ -45,9 +46,6 @@ RUN ln -sf $(command -v python3) /usr/bin/python || true
 # Create a non-root user for development with limited sudo access
 RUN useradd -m -s /bin/bash vllmuser && \
     echo "vllmuser ALL=(ALL) NOPASSWD: /usr/bin/dnf, /usr/bin/yum, /bin/chmod, /bin/chown, /usr/bin/systemctl" >> /etc/sudoers
-
-# Install essential system tools
-RUN dnf install -y hostname iproute iputils
 
 ARG REQUIRE_FFMPEG=1
 # Multimedia and image libs with optional ffmpeg-devel enforcement
@@ -115,12 +113,19 @@ RUN if [ "${INSTALL_CUDA_OPTIONAL_DEVEL}" = "1" ]; then \
             "libcufft-${CUDA_SLOT}" "libcufft-devel-${CUDA_SLOT}" \
             "libcusparse-${CUDA_SLOT}" "libcusparse-devel-${CUDA_SLOT}" \
             "libcufile-${CUDA_SLOT}" "libcufile-devel-${CUDA_SLOT}" \
-            "libcusparselt0-cuda-${CUDA_MAJOR}" "libcusparselt0-devel-cuda-${CUDA_MAJOR}" \
             "cuda-nvrtc-${CUDA_SLOT}" "cuda-nvrtc-devel-${CUDA_SLOT}" \
             "cuda-cupti-${CUDA_SLOT}" \
             "cuda-nvtx-${CUDA_SLOT}" \
             "libnvjitlink-${CUDA_SLOT}" "libnvjitlink-devel-${CUDA_SLOT}" \
             ${CUDNN_PKGS}; \
+        if dnf list --available "libcusparselt0-cuda-${CUDA_MAJOR}" >/dev/null 2>&1 && \
+           dnf list --available "libcusparselt0-devel-cuda-${CUDA_MAJOR}" >/dev/null 2>&1; then \
+            dnf install -y \
+                "libcusparselt0-cuda-${CUDA_MAJOR}" \
+                "libcusparselt0-devel-cuda-${CUDA_MAJOR}"; \
+        else \
+            echo "WARNING: cuSPARSELt packages are not available for CUDA ${CUDA_MAJOR} in the configured repos; continuing without cuSPARSELt." >&2; \
+        fi; \
         if dnf list --available "libcurand-static-${CUDA_SLOT}" >/dev/null 2>&1; then \
             dnf install -y "libcurand-static-${CUDA_SLOT}" || true; \
         fi; \
