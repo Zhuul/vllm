@@ -9,6 +9,8 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 import textwrap
@@ -22,6 +24,23 @@ DEFAULT_MATRIX = BASE_DIR / "test_matrix.yaml"
 RESULTS_DIR = BASE_DIR / "results"
 
 MAX_OUTPUT_CHARS = 4000
+
+
+def normalize_command(command: str) -> str:
+    python_exec = f"{shlex.quote(sys.executable)} -P"
+    command = re.sub(
+        r"^(\s*)python(?=\s|$)",
+        rf"\1{python_exec}",
+        command,
+        count=1,
+    )
+    command = re.sub(
+        r"^(\s*)pytest(?=\s|$)",
+        rf"\1{python_exec} -m pytest",
+        command,
+        count=1,
+    )
+    return command
 
 
 def utc_now() -> dt.datetime:
@@ -75,8 +94,19 @@ def run_command(
     workdir: Path | None,
     timeout: int | None,
 ) -> dict[str, Any]:
+    command = normalize_command(command)
     merged_env = dict(os.environ)
     merged_env.update({k: str(v) for k, v in env.items()})
+
+    # Keep child commands on the same interpreter/venv as this runner.
+    python_bin = str(Path(sys.executable).resolve().parent)
+    merged_env["PATH"] = (
+        f"{python_bin}:{merged_env['PATH']}"
+        if merged_env.get("PATH")
+        else python_bin
+    )
+    if os.environ.get("VIRTUAL_ENV"):
+        merged_env.setdefault("VIRTUAL_ENV", os.environ["VIRTUAL_ENV"])
 
     start = time.perf_counter()
     completed = subprocess.run(

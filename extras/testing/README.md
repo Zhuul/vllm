@@ -65,6 +65,20 @@ python extras/testing/run_container_smoke.py \
 # Run the image-validation profile manually inside a prepared container.
 python extras/testing/run_tests.py --profile image-validation
 
+# Prime the default smoke model cache with network access once.
+./extras/podman/run.ps1 -PrimeModelCache -AllowNetwork
+
+# Run offline image validation. This now prepares the editable install
+# automatically before running the profile.
+./extras/podman/run.ps1 -ImageValidation
+
+# Run the edit-mode profile with the same automatic editable-setup flow.
+./extras/podman/run.ps1 -EditMode
+
+# Run cache verification plus both validation profiles in one command.
+# Add -AllowNetwork if you want the cache to be re-primed online first.
+./extras/podman/run.ps1 -ValidateAll
+
 # Run the edit-mode profile manually inside a prepared container.
 python extras/testing/run_tests.py --profile edit-mode
 

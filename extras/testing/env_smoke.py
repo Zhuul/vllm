@@ -6,18 +6,47 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import platform
-import subprocess
 import sys
 from pathlib import Path
 
 
-def command_output(command: list[str]) -> str:
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def _normalized_path(entry: str) -> Path:
+    return Path(entry or os.getcwd()).resolve()
+
+
+sys.path[:] = [
+    entry for entry in sys.path
+    if _normalized_path(entry) not in {REPO_ROOT, SCRIPT_DIR}
+]
+
+if (importlib.util.find_spec("vllm") is None
+        and str(REPO_ROOT) not in sys.path):
+    sys.path.insert(0, str(REPO_ROOT))
+
+
+def import_output(module: str, expression: str) -> str:
     try:
+        namespace: dict[str, object] = {}
+        exec(f"import {module}\nvalue = {expression}", namespace)
+    except Exception as exc:
+        return f"ERROR: {exc}"
+    return str(namespace["value"]).strip()
+
+
+def nvidia_smi_output() -> str:
+    try:
+        import subprocess
+
         completed = subprocess.run(
-            command,
+            ["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
             check=True,
             capture_output=True,
             text=True,
@@ -43,27 +72,14 @@ def main() -> int:
         "torch_cuda_arch_list": os.getenv("TORCH_CUDA_ARCH_LIST"),
         "cudaarchs": os.getenv("CUDAARCHS"),
         "vllm_use_modelscope": os.getenv("VLLM_USE_MODELSCOPE"),
-        "torch_version": command_output([
-            sys.executable,
-            "-c",
-            "import torch; print(torch.__version__)",
-        ]),
-        "torch_cuda_available": command_output([
-            sys.executable,
-            "-c",
-            "import torch; print(torch.cuda.is_available())",
-        ]),
-        "torch_device_count": command_output([
-            sys.executable,
-            "-c",
-            "import torch; print(torch.cuda.device_count())",
-        ]),
-        "vllm_version": command_output([
-            sys.executable,
-            "-c",
-            "import vllm; print(getattr(vllm, '__version__', 'unknown'))",
-        ]),
-        "nvidia_smi": command_output(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"]),
+        "torch_version": import_output("torch", "torch.__version__"),
+        "torch_cuda_available": import_output("torch", "torch.cuda.is_available()"),
+        "torch_device_count": import_output("torch", "torch.cuda.device_count()"),
+        "vllm_version": import_output(
+            "vllm",
+            "getattr(vllm, '__version__', 'unknown')",
+        ),
+        "nvidia_smi": nvidia_smi_output(),
     }
 
     print(json.dumps(payload, indent=2))

@@ -6,15 +6,31 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import platform
 import sys
 import time
-from pathlib import Path
 from collections.abc import Sequence
+from pathlib import Path
 
-from vllm import LLM, SamplingParams
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def _normalized_path(entry: str) -> Path:
+    return Path(entry or os.getcwd()).resolve()
+
+
+sys.path[:] = [
+    entry for entry in sys.path
+    if _normalized_path(entry) not in {REPO_ROOT, SCRIPT_DIR}
+]
+
+if (importlib.util.find_spec("vllm") is None
+        and str(REPO_ROOT) not in sys.path):
+    sys.path.insert(0, str(REPO_ROOT))
 
 
 DEFAULT_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
@@ -73,6 +89,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.50)
+    parser.add_argument(
+        "--device",
+        default=os.getenv("VLLM_SMOKE_DEVICE", "cuda"),
+        help="vLLM device override for local smoke runs.",
+    )
+    parser.add_argument(
+        "--worker-cls",
+        default=os.getenv("VLLM_SMOKE_WORKER_CLS"),
+        help="Optional worker class override for local smoke runs.",
+    )
     parser.add_argument("--dtype", default="auto")
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--trust-remote-code", action="store_true")
@@ -98,6 +124,7 @@ def build_payload(
         "resolved_model": getattr(args, "resolved_model", args.model),
         "elapsed_s": elapsed,
         "dtype": args.dtype,
+        "device": args.device,
         "tensor_parallel_size": args.tensor_parallel_size,
         "max_model_len": args.max_model_len,
         "max_tokens": args.max_tokens,
@@ -117,6 +144,28 @@ def build_payload(
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     args.resolved_model = resolve_model_reference(args.model, args.download_dir)
+
+    if args.device == "cuda":
+        os.environ.setdefault("VLLM_PLATFORM_OVERRIDE", "cuda")
+
+    import vllm.platforms as platforms
+    from vllm import LLM, SamplingParams
+
+    current_platform = platforms.current_platform
+    if not getattr(current_platform, "device_type", "") and args.device == "cuda":
+        from vllm.platforms.cuda import CudaPlatform
+
+        platforms.current_platform = CudaPlatform()
+        current_platform = platforms.current_platform
+    if not getattr(current_platform, "device_type", ""):
+        current_platform.device_type = args.device
+
+    import vllm.engine.arg_utils as arg_utils
+    import vllm.entrypoints.llm as llm_module
+
+    arg_utils.current_platform = current_platform
+    llm_module.current_platform = current_platform
+
     prompts = list(args.prompts or DEFAULT_PROMPTS)
     sampling_params = SamplingParams(
         temperature=args.temperature,
@@ -136,6 +185,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     }
     if args.download_dir:
         llm_args["download_dir"] = args.download_dir
+    if args.worker_cls:
+        llm_args["worker_cls"] = args.worker_cls
+    elif args.device == "cuda":
+        llm_args["worker_cls"] = "vllm.v1.worker.gpu_worker.Worker"
 
     start = time.perf_counter()
     llm = LLM(**llm_args)

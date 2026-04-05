@@ -19,11 +19,16 @@ running on GitHub and the local steps you take before hacking on the codebase.
 
 - Launching `extras/podman/run.ps1 -Setup` (or `run.sh` on Linux) builds the dev container if
   needed and starts it with the entrypoint `extras/podman/entrypoint/apply-patches-then-exec.sh`.
+- The actual patch orchestration is owned by the Python patch manager
+  `extras/tools/patch_manager.py`. Shell entrypoints such as
+  `apply_patches.sh` and `apply_patches_overlay.sh` are only thin launchers.
 - The entrypoint normalizes Windows line endings, configures `git` to trust the mounted
   workspace, and can invoke `extras/patches/apply_patches_overlay.sh` before any build commands run.
   By default this is disabled to avoid mutating the bind-mounted workspace in interactive shells
   or image-only runs; enable it by setting `APPLY_PATCHES_ON_START=1` if you really need pre-setup
   patch application.
+- Patch registration lives in `extras/patches/patches.json`. Each entry points at a diff file in
+  `extras/patches/`, and the patch manager applies them in order.
 - Overlay definitions live in `extras/patches/python-overrides.txt`. Each line copies a file from
   the repository into an overlay directory inside the container (defaults to
   `/opt/work/python-overrides`) and can apply transforms (for example, adapting
@@ -47,6 +52,69 @@ running on GitHub and the local steps you take before hacking on the codebase.
 - Future customizations can be organized under `extras/patches/post-setup.d/` (or a similar
   directory) and invoked from the interactive helper so that experimental work is clearly
   separated from the deterministic pre-build overlay stage.
+
+## 4.1 Creating new extras patches
+
+- Prefer adding compatibility or environment-specific fixes as new files under `extras/patches/`
+  instead of editing synced upstream files directly. In practice, this means creating the source
+  change temporarily only to extract a patch, then restoring the upstream file.
+- Register every new patch in `extras/patches/patches.json` so the normal overlay/setup flow picks
+  it up automatically.
+- If a patch is likely to drift as upstream changes, add a `patch_fallback(...)` handler in
+  `extras/tools/patch_manager.py`. Keep that fallback idempotent so it becomes a no-op once the
+  upstream tree already contains the needed behavior.
+- Validate a new patch with `git apply --check extras/patches/<patch>.diff` before relying on it
+  in the container setup flow.
+- When generating a new patch, prefer producing it from a real diff instead of hand-writing hunk
+  headers. That is more reliable for long files and reduces patch format errors.
+- Include a short compatibility comment inside the patched code block when the reason is subtle.
+  This is especially important for toolkit, header, or platform mismatches so later agents such as
+  Jules AI can see why the patch exists without rereading the whole history.
+
+## 4.1.1 Agnostic patch rules
+
+- A proper extras patch should describe a source-level or toolkit-level fact, not a host-shell
+  fact. The desired result should be identical whether setup is launched from PowerShell, bash,
+  Podman, WSL, or a future wrapper.
+- Avoid embedding host-specific assumptions into the patch body itself. In particular, do not make
+  patch behavior depend on Windows path separators, Podman mount paths, PowerShell syntax, or WSL
+  detection unless the upstream source truly requires platform-specific code.
+- Prefer matching on stable code structure or public API shape. For example, the current
+  `cuda-memcpy-batch-compat` patch is based on the `cuMemcpyBatchAsync` function signature exposed
+  by the CUDA headers, which is a toolkit property rather than a host-environment property.
+- If a patch exists only because of one local launcher or one transient environment quirk, fix that
+  launcher or environment logic first instead of encoding the workaround in the patch.
+- When a fallback is required in `patch_manager.py`, keep it idempotent and based on target-file
+  content. A fallback should succeed because the source shape matches an expected upstream pattern,
+  not because a specific shell happened to invoke setup.
+- Before considering a patch complete, validate both of these conditions:
+  1. `git apply --check extras/patches/<patch>.diff` passes against the current tree.
+  2. The patch rationale still makes sense if the same repository is built from a different host
+     shell or container wrapper.
+
+## 4.2 Validation profiles
+
+- The standard post-setup validation entrypoint is `python extras/testing/run_tests.py --profile <name>`.
+  Profile definitions live in `extras/testing/test_matrix.yaml`, and the harness details live in
+  `extras/testing/README.md`.
+- `image-validation` is the image/runtime sanity profile. It runs `env_smoke` first to capture a
+  runtime report, then runs `deepseek_smoke` to verify an actual offline generation path.
+- `edit-mode` is the editable-install regression profile. It runs the lightweight pytest smoke
+  command from the `smoke` suite and then the same `deepseek_smoke` check, which makes it useful
+  after upstream syncs or patch changes.
+- For the current local workflow, prefer writing result files under `build/testing-results/`, for
+  example:
+
+  ```bash
+  python extras/testing/run_tests.py --profile image-validation \
+    --output /workspace/build/testing-results/image-validation.json
+
+  python extras/testing/run_tests.py --profile edit-mode \
+    --output /workspace/build/testing-results/edit-mode.json
+  ```
+
+- Each run writes both a machine-readable JSON file and a readable `.txt` summary, plus any
+  per-command artifacts under the sibling `*-artifacts/` directory.
 
 By enforcing clean working trees after each automated step, the workflow mirrors what CI expects
 and keeps the Windows-mounted repository free of unexpected modifications.

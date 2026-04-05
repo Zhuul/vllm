@@ -5,6 +5,12 @@
     [switch]$Interactive,
     [string]$Command = "",
     [switch]$Setup,
+    [switch]$ImageValidation,
+    [switch]$EditMode,
+    [switch]$ValidateAll,
+    [switch]$PrimeModelCache,
+    [switch]$AllowNetwork,
+    [string]$SmokeModel = "",
     [switch]$GPUCheck,
     [switch]$Mirror,
     [switch]$Recreate,
@@ -80,6 +86,12 @@ if ($Build) { $arguments += '--build' }
 if ($NoCache) { $arguments += '--no-cache' }
 if ($Pull) { $arguments += '--pull' }
 if ($Setup) { $arguments += '--setup' }
+if ($ImageValidation) { $arguments += '--image-validation' }
+if ($EditMode) { $arguments += '--edit-mode' }
+if ($ValidateAll) { $arguments += '--validate-all' }
+if ($PrimeModelCache) { $arguments += '--prime-model-cache' }
+if ($AllowNetwork) { $arguments += '--allow-network' }
+if (-not [string]::IsNullOrEmpty($SmokeModel)) { $arguments += @('--smoke-model', $SmokeModel) }
 if ($GPUCheck) { $arguments += '--gpu-check' }
 if ($Mirror) { $arguments += '--mirror' }
 if ($Recreate) { $arguments += '--recreate' }

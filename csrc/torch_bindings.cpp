@@ -4,6 +4,35 @@
 #include "core/registration.h"
 #include <torch/library.h>
 #include <torch/version.h>
+#include <stdexcept>
+
+void cutlass_moe_mm_sm100(torch::Tensor& out_tensors,
+                          torch::Tensor const& a_tensors,
+                          torch::Tensor const& b_tensors,
+                          torch::Tensor const& a_scales,
+                          torch::Tensor const& b_scales,
+                          torch::Tensor const& expert_offsets,
+                          torch::Tensor const& problem_sizes,
+                          torch::Tensor const& a_strides,
+                          torch::Tensor const& b_strides,
+                          torch::Tensor const& c_strides,
+                          bool per_act_token, bool per_out_ch) {
+  (void)out_tensors;
+  (void)a_tensors;
+  (void)b_tensors;
+  (void)a_scales;
+  (void)b_scales;
+  (void)expert_offsets;
+  (void)problem_sizes;
+  (void)a_strides;
+  (void)b_strides;
+  (void)c_strides;
+  (void)per_act_token;
+  (void)per_out_ch;
+  throw std::runtime_error(
+      "cutlass_moe_mm_sm100 is not linked into vllm._C; use the stable "
+      "libtorch CUTLASS MoE path instead");
+}
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.

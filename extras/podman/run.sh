@@ -43,6 +43,12 @@ CMD=""
 MIRROR=0
 PROGRESS=0
 RECREATE=0
+IMAGE_VALIDATION=0
+EDIT_MODE=0
+VALIDATE_ALL=0
+PRIME_MODEL_CACHE=0
+ALLOW_NETWORK=0
+SMOKE_MODEL="deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
 WORK_VOLUME=""
 WORK_DIR_HOST=""
 ENV_ENTRIES=()
@@ -60,6 +66,7 @@ CUDA_ARCHS=""
 INSTALL_CUDA_OPTIONAL_DEVEL=""
 CUDNN_FLAVOR=""
 REQUIRE_FFMPEG=""
+VLLM_WORK_VOLUME_DEFAULT=""
 
 show_help() {
 	cat <<'EOF'
@@ -72,6 +79,12 @@ Options:
   -c, --command CMD         Run CMD inside the dev container then exit
   -g, --gpu-check           Run CUDA / PyTorch diagnostics inside the container
   -s, --setup               Run project setup helper inside the container
+	  --image-validation    Run the image-validation extras profile
+	  --edit-mode           Run the edit-mode extras profile
+	--validate-all        Prime/verify cache, then run image-validation and edit-mode
+	  --prime-model-cache   Prime or verify the default smoke model cache
+	  --allow-network       Allow network access for cache priming
+	  --smoke-model MODEL   Override the model used by cache priming/smoke tests
   -m, --mirror              Enable LOCAL_MIRROR=1 during setup
   -p, --progress            Show progress bars during setup
       --recreate            Remove any existing container before running
@@ -158,6 +171,7 @@ load_build_config() {
   TORCH_VERSION="${TORCH_VERSION:-}"                      # optional pin
   TORCHVISION_VERSION="${TORCHVISION_VERSION:-}"          # optional pin
   TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-}"            # optional pin
+	VLLM_WORK_VOLUME_DEFAULT="${VLLM_WORK_VOLUME:-}"
 }
 
 load_modelscope_config() {
@@ -192,6 +206,12 @@ parse_args() {
 		-c|--command) CMD="${2:-}"; INTERACTIVE=0; shift 2 ;;
 		-g|--gpu-check) GPU_CHECK=1; shift ;;
 		-s|--setup) SETUP=1; shift ;;
+		--image-validation) IMAGE_VALIDATION=1; shift ;;
+		--edit-mode) EDIT_MODE=1; shift ;;
+		--validate-all) VALIDATE_ALL=1; shift ;;
+		--prime-model-cache) PRIME_MODEL_CACHE=1; shift ;;
+		--allow-network) ALLOW_NETWORK=1; shift ;;
+		--smoke-model) SMOKE_MODEL="${2:-}"; shift 2 ;;
 		-m|--mirror) MIRROR=1; shift ;;
 		-p|--progress) PROGRESS=1; shift ;;
 		--recreate) RECREATE=1; shift ;;
@@ -208,6 +228,18 @@ parse_args() {
 		INTERACTIVE=0
 	elif [[ $GPU_CHECK -eq 0 && $SETUP -eq 0 && -z "$CMD" ]]; then
 		INTERACTIVE=1
+	fi
+
+	# Validation profiles are intended to exercise the editable vLLM install,
+	# not the bind-mounted workspace fallback. Always prepare the overlay-backed
+	# install first unless setup was explicitly requested already.
+	if [[ $VALIDATE_ALL -eq 1 ]]; then
+		PRIME_MODEL_CACHE=1
+		IMAGE_VALIDATION=1
+		EDIT_MODE=1
+	fi
+	if [[ $IMAGE_VALIDATION -eq 1 || $EDIT_MODE -eq 1 || $VALIDATE_ALL -eq 1 ]]; then
+		SETUP=1
 	fi
 }
 
@@ -335,9 +367,9 @@ handle_existing_container() {
 
 	if [[ $SETUP -eq 1 ]]; then
 		echo '🔧 Running dev setup in existing container'
-		local setup_cmd
-		setup_cmd=$(command_for_setup)
-		exec podman exec "$CONTAINER_NAME" bash -lc "export NVIDIA_VISIBLE_DEVICES=all; export PYTHON_PATCH_OVERLAY=1; $setup_cmd"
+		local composed_cmd
+		composed_cmd=$(compose_container_command)
+		exec podman exec "$CONTAINER_NAME" bash -lc "export NVIDIA_VISIBLE_DEVICES=all; export PYTHON_PATCH_OVERLAY=1; $composed_cmd"
 	fi
 
 	if [[ -n "$CMD" ]]; then
@@ -450,6 +482,11 @@ apply_modelscope_mounts() {
 }
 
 prepare_run_args() {
+	load_build_config
+	if [[ -z "$WORK_VOLUME" && -n "$VLLM_WORK_VOLUME_DEFAULT" ]]; then
+		WORK_VOLUME="$VLLM_WORK_VOLUME_DEFAULT"
+	fi
+
 	RUN_ARGS=(run --rm --security-opt=label=disable)
 	if [[ -z "${VLLM_DISABLE_CDI:-}" ]]; then
 		RUN_ARGS+=(--device nvidia.com/gpu=all)
@@ -537,6 +574,50 @@ command_for_setup() {
 	printf 'cat <<"EOF" >/tmp/run-setup.sh\n%s\nEOF\nbash /tmp/run-setup.sh\nrm -f /tmp/run-setup.sh\n' "$script"
 }
 
+command_for_prime_model_cache() {
+	local allow_network_flag=""
+	local network_env='export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1'
+	if [[ $ALLOW_NETWORK -eq 1 ]]; then
+		allow_network_flag=' --allow-network'
+		network_env='export HF_HUB_OFFLINE=0 HF_DATASETS_OFFLINE=0 TRANSFORMERS_OFFLINE=0'
+	fi
+	printf '%s\npython extras/testing/prime_model_cache.py --model %q%s --output /workspace/build/testing-results/model-cache.json\n' \
+		"$network_env" "$SMOKE_MODEL" "$allow_network_flag"
+}
+
+command_for_image_validation() {
+	printf '%s\n%s\n' \
+		'export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1' \
+		'python extras/testing/run_tests.py --profile image-validation --output /workspace/build/testing-results/image-validation.json'
+}
+
+command_for_edit_mode() {
+	printf '%s\n%s\n' \
+		'export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1' \
+		'python extras/testing/run_tests.py --profile edit-mode --output /workspace/build/testing-results/edit-mode.json'
+}
+
+compose_container_command() {
+	local parts=('set -euo pipefail')
+	if [[ $SETUP -eq 1 ]]; then
+		parts+=("$(command_for_setup)")
+	fi
+	parts+=('source /home/vllmuser/venv/bin/activate 2>/dev/null || true')
+	if [[ $PRIME_MODEL_CACHE -eq 1 ]]; then
+		parts+=("$(command_for_prime_model_cache)")
+	fi
+	if [[ $IMAGE_VALIDATION -eq 1 ]]; then
+		parts+=("$(command_for_image_validation)")
+	fi
+	if [[ $EDIT_MODE -eq 1 ]]; then
+		parts+=("$(command_for_edit_mode)")
+	fi
+	if [[ -n "$CMD" ]]; then
+		parts+=("$CMD")
+	fi
+	printf '%s\n' "${parts[@]}"
+}
+
 finalize_and_run() {
 	for kv in "${ENV_VARS[@]}"; do
 		RUN_ARGS+=(--env "$kv")
@@ -548,15 +629,14 @@ finalize_and_run() {
 
 	if [[ $GPU_CHECK -eq 1 ]]; then
 		RUN_ARGS+=(--user root "$IMAGE_TAG" bash -lc "$(command_for_gpu_check)")
-	elif [[ $SETUP -eq 1 ]]; then
-		load_build_config
+	elif [[ $SETUP -eq 1 || $PRIME_MODEL_CACHE -eq 1 || $IMAGE_VALIDATION -eq 1 || $EDIT_MODE -eq 1 ]]; then
 		if [[ -n "$TORCH_CUDA_ARCH_LIST" ]]; then
 			RUN_ARGS+=(--env "TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST")
 		fi
 		if [[ -n "$CUDA_ARCHS" ]]; then
 			RUN_ARGS+=(--env "CUDAARCHS=$CUDA_ARCHS")
 		fi
-		RUN_ARGS+=("$IMAGE_TAG" bash -lc "$(command_for_setup)")
+		RUN_ARGS+=("$IMAGE_TAG" bash -lc "$(compose_container_command)")
 	elif [[ -n "$CMD" ]]; then
 		RUN_ARGS+=("$IMAGE_TAG" bash -lc "export LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/lib/wsl/drivers:${LD_LIBRARY_PATH:-}; source /home/vllmuser/venv/bin/activate 2>/dev/null || true; $CMD")
 	else

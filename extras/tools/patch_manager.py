@@ -264,6 +264,135 @@ def patch_fallback(name: str):
             )
             return False
 
+    elif name == "cuda-memcpy-batch-compat":
+        cache_kernels_file = Path("csrc/cache_kernels.cu")
+        if not cache_kernels_file.exists():
+            return False
+
+        with open(cache_kernels_file, encoding="utf-8") as f:
+            content = f.read()
+
+        if "CuMemcpyBatchAsyncV1" in content:
+            print(
+                "[patches] fallback for cuda-memcpy-batch-compat already applied."
+            )
+            return True
+
+        new_content = content
+        if "#include <type_traits>" not in new_content:
+            new_content = new_content.replace(
+                "#include <cfloat>\n",
+                "#include <cfloat>\n#include <type_traits>\n",
+            )
+
+        old_block = (
+            "  static_assert(sizeof(CUdeviceptr) == sizeof(int64_t));\n"
+            "  static_assert(sizeof(size_t) == sizeof(int64_t));\n"
+            "#if !defined(USE_ROCM) && defined(CUDA_VERSION) && CUDA_VERSION >= 12080\n"
+            "  CUmemcpyAttributes attr = {};\n"
+            "  attr.srcAccessOrder = CU_MEMCPY_SRC_ACCESS_ORDER_STREAM;\n"
+            "  size_t attrs_idx = 0;\n"
+            "  size_t fail_idx = 0;\n"
+            "  CUresult result = cuMemcpyBatchAsync(\n"
+            "      reinterpret_cast<CUdeviceptr*>(const_cast<int64_t*>(dst_data)),\n"
+            "      reinterpret_cast<CUdeviceptr*>(const_cast<int64_t*>(src_data)),\n"
+            "      reinterpret_cast<size_t*>(const_cast<int64_t*>(size_data)),\n"
+            "      static_cast<size_t>(n), &attr, &attrs_idx, 1, &fail_idx,\n"
+            "      static_cast<CUstream>(stream));\n"
+            "  TORCH_CHECK(result == CUDA_SUCCESS, \"cuMemcpyBatchAsync failed at index \",\n"
+            "              fail_idx, \" with error \", result);\n"
+            "#else\n"
+            "  // Fallback for CUDA < 12.8 and ROCm: individual async copies.\n"
+            "  // cudaMemcpyDefault lets the driver infer direction from pointer types.\n"
+            "  for (int64_t i = 0; i < n; i++) {\n"
+            "    cudaMemcpyAsync(reinterpret_cast<void*>(dst_data[i]),\n"
+            "                    reinterpret_cast<void*>(src_data[i]),\n"
+            "                    static_cast<size_t>(size_data[i]), cudaMemcpyDefault,\n"
+            "                    stream);\n"
+            "  }\n"
+            "#endif\n"
+        )
+        replacement_block = (
+            "  static_assert(sizeof(CUdeviceptr) == sizeof(int64_t));\n"
+            "  static_assert(sizeof(size_t) == sizeof(int64_t));\n"
+            "#if !defined(USE_ROCM) && defined(CUDA_VERSION) && CUDA_VERSION >= 12080\n"
+            "  auto fallback_memcpy_async = [&]() {\n"
+            "    for (int64_t i = 0; i < n; i++) {\n"
+            "      cudaMemcpyAsync(reinterpret_cast<void*>(dst_data[i]),\n"
+            "                      reinterpret_cast<void*>(src_data[i]),\n"
+            "                      static_cast<size_t>(size_data[i]), cudaMemcpyDefault,\n"
+            "                      stream);\n"
+            "    }\n"
+            "  };\n\n"
+            "  using CuMemcpyBatchAsyncV1 = CUresult(CUDAAPI *)(\n"
+            "      CUdeviceptr*, CUdeviceptr*, size_t*, size_t, CUmemcpyAttributes*,\n"
+            "      size_t*, size_t, CUstream);\n"
+            "  using CuMemcpyBatchAsyncV2 = CUresult(CUDAAPI *)(\n"
+            "      CUdeviceptr*, CUdeviceptr*, size_t*, size_t, CUmemcpyAttributes*,\n"
+            "      size_t*, size_t, size_t*, CUstream);\n"
+            "  struct CuMemcpyBatchAsyncCompat {\n"
+            "    static CUresult call(CuMemcpyBatchAsyncV1 fn, CUdeviceptr* dsts,\n"
+            "                         CUdeviceptr* srcs, size_t* sizes, size_t count,\n"
+            "                         CUmemcpyAttributes* attrs, size_t* attrs_idx,\n"
+            "                         size_t num_attrs, size_t* fail_idx,\n"
+            "                         CUstream stream) {\n"
+            "      if (fail_idx != nullptr) {\n"
+            "        *fail_idx = 0;\n"
+            "      }\n"
+            "      return fn(dsts, srcs, sizes, count, attrs, attrs_idx, num_attrs,\n"
+            "                stream);\n"
+            "    }\n\n"
+            "    static CUresult call(CuMemcpyBatchAsyncV2 fn, CUdeviceptr* dsts,\n"
+            "                         CUdeviceptr* srcs, size_t* sizes, size_t count,\n"
+            "                         CUmemcpyAttributes* attrs, size_t* attrs_idx,\n"
+            "                         size_t num_attrs, size_t* fail_idx,\n"
+            "                         CUstream stream) {\n"
+            "      return fn(dsts, srcs, sizes, count, attrs, attrs_idx, num_attrs,\n"
+            "                fail_idx, stream);\n"
+            "    }\n\n"
+            "    static CUresult call(...) {\n"
+            "      return CUDA_ERROR_NOT_SUPPORTED;\n"
+            "    }\n"
+            "  };\n\n"
+            "  constexpr auto cuMemcpyBatchAsyncPtr = &cuMemcpyBatchAsync;\n"
+            "  CUmemcpyAttributes attr = {};\n"
+            "  attr.srcAccessOrder = CU_MEMCPY_SRC_ACCESS_ORDER_STREAM;\n"
+            "  size_t attrs_idx = 0;\n"
+            "  size_t fail_idx = 0;\n"
+            "  CUresult result = CuMemcpyBatchAsyncCompat::call(\n"
+            "      cuMemcpyBatchAsyncPtr,\n"
+            "      reinterpret_cast<CUdeviceptr*>(const_cast<int64_t*>(dst_data)),\n"
+            "      reinterpret_cast<CUdeviceptr*>(const_cast<int64_t*>(src_data)),\n"
+            "      reinterpret_cast<size_t*>(const_cast<int64_t*>(size_data)),\n"
+            "      static_cast<size_t>(n), &attr, &attrs_idx, 1, &fail_idx,\n"
+            "      static_cast<CUstream>(stream));\n"
+            "  if (result == CUDA_ERROR_NOT_SUPPORTED) {\n"
+            "    fallback_memcpy_async();\n"
+            "  } else {\n"
+            "    TORCH_CHECK(result == CUDA_SUCCESS, \"cuMemcpyBatchAsync failed at index \",\n"
+            "                fail_idx, \" with error \", result);\n"
+            "  }\n"
+            "#else\n"
+            "  // Fallback for CUDA < 12.8 and ROCm: individual async copies.\n"
+            "  // cudaMemcpyDefault lets the driver infer direction from pointer types.\n"
+            "  for (int64_t i = 0; i < n; i++) {\n"
+            "    cudaMemcpyAsync(reinterpret_cast<void*>(dst_data[i]),\n"
+            "                    reinterpret_cast<void*>(src_data[i]),\n"
+            "                    static_cast<size_t>(size_data[i]), cudaMemcpyDefault,\n"
+            "                    stream);\n"
+            "  }\n"
+            "#endif\n"
+        )
+
+        if old_block in new_content:
+            new_content = new_content.replace(old_block, replacement_block)
+
+        if new_content != content:
+            with open(cache_kernels_file, "w", encoding="utf-8") as f:
+                f.write(new_content)
+            print("[patches] Applied fallback for cuda-memcpy-batch-compat.")
+            return True
+
     return False
 
 

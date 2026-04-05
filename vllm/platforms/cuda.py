@@ -18,8 +18,16 @@ from torch.distributed.distributed_c10d import is_nccl_available
 from typing_extensions import ParamSpec
 
 # import custom ops, trigger op registration
-import vllm._C  # noqa
-import vllm._C_stable_libtorch  # noqa
+_C_IMPORT_ERROR: ImportError | None = None
+_C_STABLE_IMPORT_ERROR: ImportError | None = None
+try:
+    import vllm._C  # noqa
+except ImportError as exc:
+    _C_IMPORT_ERROR = exc
+try:
+    import vllm._C_stable_libtorch  # noqa
+except ImportError as exc:
+    _C_STABLE_IMPORT_ERROR = exc
 import vllm.envs as envs
 from vllm.logger import init_logger
 from vllm.utils.import_utils import import_pynvml
@@ -38,6 +46,12 @@ else:
     CacheDType = None
 
 logger = init_logger(__name__)
+
+if _C_IMPORT_ERROR is not None:
+    logger.warning("Failed to import from vllm._C: %r", _C_IMPORT_ERROR)
+if _C_STABLE_IMPORT_ERROR is not None:
+    logger.warning("Failed to import from vllm._C_stable_libtorch: %r",
+                   _C_STABLE_IMPORT_ERROR)
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")

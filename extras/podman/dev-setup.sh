@@ -42,22 +42,28 @@ prepare_src_overlay() {
         mkdir -p "$overlay_root"
     fi
 
+	# The overlay is container-local scratch state. Recreate it on each setup
+	# to avoid rsync delete conflicts from prior builds in the persistent work
+	# volume.
+	rm -rf "$overlay_root"
+	mkdir -p "$overlay_root"
+
     # Mirror the workspace into overlay
     if command -v rsync >/dev/null 2>&1; then
-        rsync -a --delete \
+		rsync -a \
             --exclude='.git' \
             --exclude='.venv' --exclude='venv' \
             --exclude='__pycache__' \
             --exclude='*.egg-info' \
             --exclude='build' --exclude='dist' \
-            "$src_root/" "$overlay_root/"
+			"$src_root/" "$overlay_root/" 1>&2
     else
         ( cd "$src_root" && tar --exclude-vcs \
             --exclude='.venv' --exclude='venv' \
             --exclude='__pycache__' \
             --exclude='*.egg-info' \
             --exclude='build' --exclude='dist' \
-            -cf - . ) | ( cd "$overlay_root" && tar -xf - )
+			-cf - . ) | ( cd "$overlay_root" && tar -xf - ) 1>&2
     fi
 
     # Apply repo patches in overlay only
@@ -341,15 +347,20 @@ fi
 
 echo "[dev-setup] Optional CUDA flags: CUBLAS=$USE_CUBLAS CUDNN=$USE_CUDNN CUFILE=$USE_CUFILE CUSPARSE=$USE_CUSPARSE CUSPARSELT=$USE_CUSPARSELT CUDSS=$USE_CUDSS" >&2
 
+if ! command -v uv >/dev/null 2>&1; then
+	echo "[dev-setup] uv not found in the active environment; installing it into $VIRTUAL_ENV" >&2
+	python -m pip install --upgrade uv
+fi
+
 # Install Python deps from repo (torch stack already in image)
 if [[ -f requirements/common.txt ]]; then
-	pip install -r requirements/common.txt || true
+	uv pip install -r requirements/common.txt || true
 fi
 # Extras smoke tests import tblib from tests/conftest.py.
-pip install "tblib==3.1.0" || true
+uv pip install "tblib==3.1.0" || true
 
 # Ensure build backend is available when using --no-build-isolation
-pip install -U "setuptools>=77,<80" setuptools-scm wheel packaging || true
+uv pip install -U "setuptools>=77,<80" setuptools-scm wheel packaging || true
 
 # Avoid slow git describe during setuptools_scm by providing a pretend version
 export SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION:-0+local}
@@ -361,6 +372,28 @@ echo "📦 Installing vLLM in editable mode from overlay..."
 # Use --no-use-pep517 and proper environment variables to handle filesystem restrictions
 # This avoids the need for dangerous monkey patching of core Python modules
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+export UV_LOCK_TIMEOUT=${UV_LOCK_TIMEOUT:-900}
+
+# Remove any previously installed editable vLLM package first. Otherwise uv can
+# treat /workspace as the explicit source tree to reinstall, which defeats the
+# overlay strategy and pushes builds back onto the bind mount.
+uv pip uninstall vllm >/dev/null 2>&1 || true
+
+clear_stale_uv_locks() {
+	# Interrupted prior runs can leave uv lockfiles behind in the persistent
+	# container state. If no uv process is still running, clear those lockfiles
+	# before retrying the editable install.
+	if pgrep -x uv >/dev/null 2>&1; then
+		echo "[dev-setup] uv process still active; leaving lock files in place" >&2
+		return 0
+	fi
+
+	find "$VIRTUAL_ENV" -maxdepth 1 -name '.lock' -type f -print -delete 2>/dev/null >&2 || true
+	if [[ -d "$HOME/.cache/uv" ]]; then
+		find "$HOME/.cache/uv" -name '.lock' -type f -print -delete 2>/dev/null >&2 || true
+	fi
+}
+
 install_editable_from_overlay() {
     cd "$SRC_OVERLAY_DIR"
     # Provide CMake hints for cuDNN so detection can succeed if headers/libs are present.
@@ -400,20 +433,18 @@ install_editable_from_overlay() {
 		fi
     export CMAKE_ARGS="${CMAKE_ARGS_INIT}"
     FETCHCONTENT_BASE_DIR="$TMPDIR/deps" \
-        pip install -e . --no-deps --no-build-isolation --verbose \
+		uv pip install -e . --no-deps --no-build-isolation --verbose \
         --config-settings build-dir="$TMPDIR/vllm-build"
 }
 
 if ! install_editable_from_overlay; then
-    echo "? Editable install via pip failed; attempting legacy develop fallback" >&2
-    (
-        cd "$SRC_OVERLAY_DIR"
-        python setup.py develop
-    ) || {
-        echo "? Editable install failed. This may be due to filesystem restrictions." >&2
-        echo "?? For WSL/Windows mounts, consider using bind mounts with proper options." >&2
-        exit 1
-    }
+	echo "[dev-setup] Editable install failed on first attempt; clearing stale uv locks and retrying" >&2
+	clear_stale_uv_locks
+	if ! install_editable_from_overlay; then
+		echo "? Editable install failed after retry; refusing legacy setup.py develop fallback." >&2
+		echo "?? This keeps the environment from drifting away from the overlay-backed install." >&2
+		exit 1
+	fi
 fi
 echo "✅ vLLM installed in editable mode (from overlay)."
 

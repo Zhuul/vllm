@@ -209,8 +209,39 @@ builtin_platform_plugins = {
     "cpu": cpu_platform_plugin,
 }
 
+_PLATFORM_OVERRIDE_QUALNAMES = {
+    "tpu": "vllm.platforms.tpu.TpuPlatform",
+    "cuda": "vllm.platforms.cuda.CudaPlatform",
+    "rocm": "vllm.platforms.rocm.RocmPlatform",
+    "xpu": "vllm.platforms.xpu.XPUPlatform",
+    "cpu": "vllm.platforms.cpu.CpuPlatform",
+}
+
+_PLATFORM_OVERRIDE_ENV_VAR = "VLLM_PLATFORM_OVERRIDE"
+
+
+def _resolve_platform_override() -> str | None:
+    override = os.getenv(_PLATFORM_OVERRIDE_ENV_VAR)
+    if not override:
+        return None
+
+    override = override.strip()
+    if not override:
+        return None
+
+    if override in _PLATFORM_OVERRIDE_QUALNAMES:
+        return _PLATFORM_OVERRIDE_QUALNAMES[override]
+
+    return override
+
 
 def resolve_current_platform_cls_qualname() -> str:
+    platform_override = _resolve_platform_override()
+    if platform_override is not None:
+        logger.info("Using platform override from %s=%s",
+                    _PLATFORM_OVERRIDE_ENV_VAR, platform_override)
+        return platform_override
+
     platform_plugins = load_plugins_by_group(PLATFORM_PLUGINS_GROUP)
 
     activated_plugins = []

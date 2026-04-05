@@ -172,8 +172,8 @@ ENV TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}"
 ARG CUDA_ARCHS="80;86;89;90;120"
 ENV CUDAARCHS="${CUDA_ARCHS}"
 
-# Upgrade pip and setuptools to latest versions
-RUN pip install --upgrade pip setuptools>=61 wheel
+# Upgrade packaging tools and install uv for repo-standard Python workflows.
+RUN python -m pip install --upgrade pip 'setuptools>=61' wheel uv
 
 COPY requirements/ /tmp/requirements/
 
@@ -193,41 +193,41 @@ RUN set -euxo pipefail \
     && TV_SPEC=${TV_SPEC:-torchvision} \
     && TA_SPEC=${TORCHAUDIO_VERSION:+torchaudio==${TORCHAUDIO_VERSION}} \
     && TA_SPEC=${TA_SPEC:-torchaudio} \
-    && pip install ${PRE} --upgrade \
+    && uv pip install ${PRE} --upgrade \
         "$TORCH_SPEC" "$TV_SPEC" "$TA_SPEC" \
         --index-url "${INDEX_BASE}/${CHAN}${TORCH_CUDA_INDEX}"
 
 # Install PyAV for torchvision video I/O (read_video) compatibility
-RUN pip install --upgrade av
+RUN uv pip install --upgrade av
 
 # Install TorchCodec to support torchaudio.load on recent nightlies
 RUN set -euxo pipefail \
-    && (pip install --pre torchcodec \
-        || pip install torchcodec \
-        || pip install --no-deps 'git+https://github.com/pytorch/torchcodec@main')
+    && (uv pip install --pre torchcodec \
+        || uv pip install torchcodec \
+        || uv pip install --no-deps 'git+https://github.com/pytorch/torchcodec@main')
 
 # Install modern build tools and vLLM's build dependencies and CUDA deps early,
 # but sanitize requirements to avoid downgrading torch-family or forcing xformers pins.
 COPY pyproject.toml /tmp/pyproject.toml
 RUN set -euxo pipefail \
         && cd /tmp \
-        && pip install "setuptools>=61" "setuptools-scm>=8" build wheel ninja cmake \
+        && uv pip install "setuptools>=61" "setuptools-scm>=8" build wheel ninja cmake \
         && mkdir -p /tmp/requirements_sanitized \
         && for f in build.txt cuda.txt common.txt; do \
                  if [ -f "/tmp/requirements/$f" ]; then \
                      sed -E '/^(torch|torchvision|torchaudio|xformers)\b/Id' "/tmp/requirements/$f" > "/tmp/requirements_sanitized/$f"; \
                  fi; \
              done \
-    && pip install --pre \
+    && uv pip install --pre \
         -r /tmp/requirements_sanitized/build.txt \
         -r /tmp/requirements_sanitized/cuda.txt \
         -r /tmp/requirements_sanitized/common.txt
 
 # Provide ModelScope tooling and YAML support for model automation helpers
-RUN pip install --upgrade pyyaml modelscope
+RUN uv pip install --upgrade pyyaml modelscope
 
 # Install minimal development extras
-RUN pip install pytest pytest-asyncio ipython
+RUN uv pip install pytest pytest-asyncio ipython
 
 # Note: vLLM will be installed from source in development mode via dev-setup.sh
 # This ensures compatibility with the PyTorch nightly build
@@ -257,9 +257,9 @@ RUN echo '#!/bin/bash' > /home/vllmuser/setup_vllm_dev.sh && \
     echo 'export VLLM_INSTALL_PUNICA_KERNELS=0' >> /home/vllmuser/setup_vllm_dev.sh && \
     echo 'export MAX_JOBS=4' >> /home/vllmuser/setup_vllm_dev.sh && \
     echo '# Install current workspace requirements first' >> /home/vllmuser/setup_vllm_dev.sh && \
-    echo 'if [ -f requirements/common.txt ]; then pip install -r requirements/common.txt; fi' >> /home/vllmuser/setup_vllm_dev.sh && \
+    echo 'if [ -f requirements/common.txt ]; then uv pip install -r requirements/common.txt; fi' >> /home/vllmuser/setup_vllm_dev.sh && \
     echo '# Use temporary directory for CMake build files' >> /home/vllmuser/setup_vllm_dev.sh && \
-    echo 'FETCHCONTENT_BASE_DIR="$TMPDIR/deps" pip install -e . --no-deps --no-build-isolation --verbose' >> /home/vllmuser/setup_vllm_dev.sh && \
+    echo 'FETCHCONTENT_BASE_DIR="$TMPDIR/deps" uv pip install -e . --no-deps --no-build-isolation --verbose' >> /home/vllmuser/setup_vllm_dev.sh && \
     echo 'echo "✅ vLLM installed in editable mode!"' >> /home/vllmuser/setup_vllm_dev.sh && \
     echo 'python -c "import vllm; print(\"vLLM version:\", vllm.__version__)"' >> /home/vllmuser/setup_vllm_dev.sh && \
     chmod +x /home/vllmuser/setup_vllm_dev.sh

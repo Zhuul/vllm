@@ -22,6 +22,10 @@
     {
       "name": "cuda-optional-flags",
       "diff": "0004-cuda-optional-flags.diff"
+    },
+    {
+      "name": "cuda-memcpy-batch-compat",
+      "diff": "0005-cuda-memcpy-batch-compat.diff"
     }
   ]
 }
